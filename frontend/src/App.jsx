@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 const API_BASE =
   (import.meta?.env?.VITE_API_BASE_URL || "http://localhost:5000").replace(/\/$/, "");
 
-const SYNC_INTERVAL = 5000;
+console.log("API_BASE:", API_BASE);const SYNC_INTERVAL = 5000;
 const MOBILE_BREAKPOINT = 768;
 
 async function api(path, options = {}, token = "") {
