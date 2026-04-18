@@ -1,7 +1,7 @@
 import express from 'express';
 import morgan from 'morgan';
 import cors from 'cors';
-import { connectDb } from './db.js';
+import { connectDatabase } from './db.js';
 import { config } from './config.js';
 import { apiRouter } from './routes/index.js';
 
@@ -22,7 +22,7 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ message: err.message || 'Internal server error' });
 });
 
-connectDb().then(() => {
+connectDatabase().then(() => {
   app.listen(config.port, () => {
     console.log(`Forever POS backend running on port ${config.port}`);
   });
