@@ -154,6 +154,7 @@ export default function App() {
 
   const [showMoreHistory, setShowMoreHistory] = useState(false);
   const syncTimerRef = useRef(null);
+  const lastSeenNotificationIdRef = useRef(null);
 
   const isAdmin = user?.role === "admin";
   const unreadCount = getUnreadCount(notifications, user?.id);
@@ -267,6 +268,11 @@ export default function App() {
     setToast("Đã đăng xuất");
   }
 
+  function goHome() {
+    setActiveMainTab("sales");
+    setMobileTab("tables");
+  }
+
   function startSync() {
     stopSync();
     syncAll();
@@ -314,7 +320,26 @@ export default function App() {
       setHistoryOrders(Array.isArray(nextHistory) ? nextHistory : []);
       setReportSummary(nextReport || null);
       setWarehouseItems(Array.isArray(nextWarehouse) ? nextWarehouse : []);
-      setNotifications(Array.isArray(nextNotifications) ? nextNotifications : []);
+
+      const notificationList = Array.isArray(nextNotifications) ? nextNotifications : [];
+      setNotifications(notificationList);
+
+      if (notificationList.length > 0) {
+        const latest = notificationList[0];
+
+        if (
+          lastSeenNotificationIdRef.current &&
+          latest?._id &&
+          latest._id !== lastSeenNotificationIdRef.current &&
+          latest.type === "payment"
+        ) {
+          setToast(latest.message || latest.title || "Có bàn vừa thanh toán");
+        }
+
+        if (latest?._id) {
+          lastSeenNotificationIdRef.current = latest._id;
+        }
+      }
 
       if (isAdmin) {
         setUsers(Array.isArray(results[6]?.value) ? results[6].value : []);
@@ -442,8 +467,10 @@ export default function App() {
       try {
         await createNotification({
           type: "payment",
-          title: "Thanh toán thành công",
-          message: `${selectedTable?.name || "Bàn"} - ${formatMoney(paidOrder.subtotal)}`,
+          title: "Có bàn vừa thanh toán",
+          message: `${selectedTable?.name || "Bàn"} đã thanh toán ${formatMoney(
+            paidOrder.subtotal
+          )}`,
           level: "success",
         });
       } catch {
@@ -1658,6 +1685,19 @@ export default function App() {
     );
   }
 
+  function renderMobileHomeButton() {
+    if (!isMobile) return null;
+
+    const isHomeScreen = activeMainTab === "sales" && mobileTab === "tables";
+    if (isHomeScreen) return null;
+
+    return (
+      <button className="floating-home-btn" onClick={goHome}>
+        Trang chủ
+      </button>
+    );
+  }
+
   if (!token || !user) {
     return (
       <>
@@ -1681,6 +1721,8 @@ export default function App() {
         {activeMainTab === "admin" && isAdmin && renderAdmin()}
         {activeMainTab === "reports" && renderReports()}
         {activeMainTab === "notifications" && renderNotifications()}
+
+        {renderMobileHomeButton()}
       </div>
     </>
   );
@@ -2178,6 +2220,20 @@ function StyleTag() {
         background: #ead8c7;
         margin: 16px 0;
       }
+      .floating-home-btn {
+        position: fixed;
+        right: 14px;
+        bottom: 86px;
+        z-index: 60;
+        border: 0;
+        border-radius: 999px;
+        padding: 14px 18px;
+        background: linear-gradient(180deg, #8d5a2c 0%, #734620 100%);
+        color: #fff;
+        font-weight: 800;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+        cursor: pointer;
+      }
 
       @media (max-width: 1024px) {
         .sales-layout.desktop-layout {
@@ -2233,6 +2289,9 @@ function StyleTag() {
         .main-tab,
         .sub-tab {
           min-height: 46px;
+        }
+        .floating-home-btn {
+          bottom: 86px;
         }
       }
     `}</style>
