@@ -13,10 +13,10 @@ console.log("VITE_API_BASE_URL:", import.meta.env.VITE_API_BASE_URL);
 const SYNC_INTERVAL = 5000;
 const MOBILE_BREAKPOINT = 768;
 
-// QR thanh toán cố định lấy từ ảnh anh gửi, đã nhúng trực tiếp vào code.
-// Nếu sau này anh đổi mã QR, chỉ cần thay giá trị constant này.
+// QR thanh toán cố định đã được sửa lại thành ảnh hợp lệ.
+// Nếu sau này anh đổi mã QR, chỉ cần thay constant này.
 const FIXED_PAYMENT_QR_IMAGE =
-  "data:image/jpeg;base64,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";
+  "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABIMDRANCxIQDhAUExIVGywdGxgYGzYnKSAsQDlEQz85Pj1HUGZXR0thTT0+WXlaYWltcYKPjIyVl4+Tlp6iYF5h/2wBDAQ0ODxYQFhwYGiBhXl5eYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBh/3QAEAAP/2gAMAwEAAhEDEQA/AMzG1mP+QJ+Z8v8AjHf9a5C6fIsC4f7VQbJbYYP8A8J6U+Z8iN8V2dSf4j3qFrv2kVg7e9o2v7w9Bq9WZb2v0nTt8kP2yK3Q1o0c7aP3mT1K1o6d1Tt8n2h3vJ1b2bGf0rQ0r7P2q1rS6kYf2wqk8WwVYx4q4c5mO1Vf6hYxv3TqM6zq7zqM7M7bZ4jvWmqvNq1Wm6k7d6aX1wP3m1Xl9x3lS1s2l3m1Zq0q2mM2r7P0a1o3e6o+vM7W7S3qN5vKx8vM0k9T1M2QzR8S3fT9dS1nWc0v6D2x7q8vN1Qq9N1l2Y1k8qv7tH3GmN2eVY1V2n1q6k6dLqH3y6c6dP8ASrXvL7J2e0OqV3N1cL1I3X7+7Nmbm5t7m3j9l8YqvY2s9n0pWm2lR0tQ1Wn2smv6J2T3eF9m1pWvOQ5mVJr9Nq7rQ6XkqjM8E7q7C7n3S0bY2p5mKx1V7nS1j5S0u3uZ+K1l7r2u4M6nXx2M3x6f2JY1p8nWnX1H6o0rW1R6j2r2nT7rP2o6p0V3Q+S5s0N5Npq6c0m1b0n6V9l7Sx6S4bZQz6m3kvR3k3y2d2Vj2l1m0Y9o7s3kP1rVf4p8U/6iP8A3c//2Q==";
 
 async function api(path, options = {}, token = "") {
   if (!API_BASE) {
@@ -840,7 +840,7 @@ export default function App() {
             .center-t { text-align: center; }
             .right { text-align: right; }
             .receipt-block { margin-top: 2px; }
-            .big { font-size: 15px; font-weight: 800; }
+            .spacer { height: 4px; }
             .qr-wrap {
               margin-top: 10px;
               border-top: 1px dashed #000;
@@ -848,12 +848,12 @@ export default function App() {
             }
             .qr-image {
               width: 100%;
-              max-width: 230px;
+              max-width: 210px;
               display: block;
               margin: 8px auto 4px;
+              height: auto;
             }
             .small { font-size: 11px; }
-            .spacer { height: 4px; }
           </style>
         </head>
         <body>
@@ -941,7 +941,7 @@ export default function App() {
 
           <div class="qr-wrap center">
             <div class="bold" style="font-size:16px;">NHẬN THANH TOÁN QR</div>
-            <img class="qr-image" src="${FIXED_PAYMENT_QR_IMAGE}" alt="QR thanh toán" />
+            <img id="payment-qr" class="qr-image" src="${FIXED_PAYMENT_QR_IMAGE}" alt="QR thanh toán" />
             <div class="small">Quét mã để thanh toán</div>
             <div class="small">MoMo - Nguyễn Ngọc Dũng - 0788880891</div>
           </div>
@@ -953,10 +953,34 @@ export default function App() {
           <div class="center">Ngày bán: ${paidDate.toLocaleString("vi-VN")}</div>
 
           <script>
-            window.onload = function () {
-              window.print();
-              setTimeout(() => window.close(), 300);
-            };
+            (function () {
+              function doPrint() {
+                setTimeout(function () {
+                  window.print();
+                  setTimeout(function () {
+                    window.close();
+                  }, 300);
+                }, 200);
+              }
+
+              window.onload = function () {
+                var qr = document.getElementById("payment-qr");
+                if (!qr) {
+                  doPrint();
+                  return;
+                }
+
+                if (qr.complete && qr.naturalWidth > 0) {
+                  doPrint();
+                  return;
+                }
+
+                qr.onload = doPrint;
+                qr.onerror = doPrint;
+
+                setTimeout(doPrint, 1500);
+              };
+            })();
           </script>
         </body>
       </html>
