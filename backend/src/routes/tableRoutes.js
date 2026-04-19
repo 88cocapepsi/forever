@@ -13,6 +13,7 @@ tableRouter.post('/seed-default', requireAuth, requireAdmin, async (_req, res) =
   const defaults = [
     ...Array.from({ length: 6 }, (_, i) => ({ name: `Bàn ${i + 1}`, zone: 'Sảnh trước', type: 'table' })),
     ...Array.from({ length: 4 }, (_, i) => ({ name: `Bàn ${i + 7}`, zone: 'Sau công viên', type: 'table' })),
+    ...Array.from({ length: 4 }, (_, i) => ({ name: `VIP ${i + 1}`, zone: 'VIP', type: 'table' })),
     { name: 'Mang về', zone: 'Khác', type: 'takeaway' },
     { name: 'Giao đi', zone: 'Khác', type: 'delivery' }
   ];
