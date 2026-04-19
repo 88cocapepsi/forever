@@ -1089,11 +1089,16 @@ export default function App() {
     const order = table.currentOrder && typeof table.currentOrder === "object" ? table.currentOrder : null;
     const selected = table._id === selectedTableId;
     const busy = !!getTableOrderId(table);
+    const isVip =
+      table.zone === "VIP" ||
+      /^vip\s*\d+/i.test(String(table.name || "").trim());
 
     return (
       <button
         key={table._id}
-        className={`table-card ${selected ? "selected" : ""} ${busy ? "busy" : ""}`}
+        className={`table-card ${selected ? "selected" : ""} ${busy ? "busy" : ""} ${
+          isVip ? "vip" : ""
+        }`}
         onClick={() => setSelectedTableId(table._id)}
       >
         <div className="table-name">{table.name}</div>
@@ -1107,7 +1112,14 @@ export default function App() {
   function renderTablesPanel() {
     const front = tables.filter((t) => t.zone === "Sảnh trước");
     const park = tables.filter((t) => t.zone === "Sau công viên");
-    const other = tables.filter((t) => t.zone === "Khác");
+    const vip = tables.filter(
+      (t) => t.zone === "VIP" || /^vip\s*\d+/i.test(String(t.name || "").trim())
+    );
+    const other = tables.filter(
+      (t) =>
+        t.zone === "Khác" &&
+        !(t.zone === "VIP" || /^vip\s*\d+/i.test(String(t.name || "").trim()))
+    );
 
     return (
       <div className="panel">
@@ -1135,6 +1147,15 @@ export default function App() {
             <div className="zone-title">Sau công viên</div>
             <div className="table-grid">{park.map(renderTableButton)}</div>
           </>
+        )}
+
+        <div className="zone-title">VIP</div>
+        {vip.length ? (
+          <div className="table-grid">{vip.map(renderTableButton)}</div>
+        ) : (
+          <div className="empty-box">
+            Chưa có dữ liệu 4 bàn VIP. Cần thêm VIP 1, VIP 2, VIP 3, VIP 4 từ backend/database.
+          </div>
         )}
 
         {!!other.length && (
@@ -2148,6 +2169,20 @@ function StyleTag() {
       }
       .table-card.busy {
         background: linear-gradient(180deg, #fff6ea 0%, #f7e8d4 100%);
+      }
+      .table-card.vip {
+        background: linear-gradient(135deg, #c9a96e, #8b5e3c);
+        color: #fff;
+        border-color: #b98b43;
+        box-shadow: 0 0 10px rgba(201,169,110,0.35);
+      }
+      .table-card.vip .table-meta,
+      .table-card.vip .table-total {
+        color: #fff8e8;
+      }
+      .table-card.vip.selected {
+        border-color: #f7dfa1;
+        box-shadow: 0 0 0 3px rgba(247,223,161,0.28);
       }
       .table-name {
         font-size: 16px;
