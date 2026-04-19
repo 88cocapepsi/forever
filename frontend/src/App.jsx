@@ -197,7 +197,7 @@ export default function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(""), 2200);
+    const t = setTimeout(() => setToast(""), 3000);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -333,7 +333,7 @@ export default function App() {
           latest._id !== lastSeenNotificationIdRef.current &&
           latest.type === "payment"
         ) {
-          setToast(latest.message || latest.title || "Có bàn vừa thanh toán");
+          setToast(latest.message || "Có bàn vừa thanh toán");
         }
 
         if (latest?._id) {
@@ -467,10 +467,8 @@ export default function App() {
       try {
         await createNotification({
           type: "payment",
-          title: "Có bàn vừa thanh toán",
-          message: `${selectedTable?.name || "Bàn"} đã thanh toán ${formatMoney(
-            paidOrder.subtotal
-          )}`,
+          title: "Thanh toán bàn",
+          message: `${selectedTable?.name || "Bàn"} - ${formatMoney(paidOrder.subtotal)}`,
           level: "success",
         });
       } catch {
