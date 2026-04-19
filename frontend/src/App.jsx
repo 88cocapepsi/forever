@@ -1,33 +1,54 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const API_BASE =
-  (import.meta?.env?.VITE_API_BASE_URL || "http://localhost:5000").replace(/\/$/, "");
+const ENV_API_BASE = import.meta?.env?.VITE_API_BASE_URL?.trim();
+const IS_LOCAL =
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1";
 
-console.log("API_BASE:", API_BASE);const SYNC_INTERVAL = 5000;
+const API_BASE = (ENV_API_BASE || (IS_LOCAL ? "http://localhost:5000" : "")).replace(/\/$/, "");
+
+console.log("API_BASE:", API_BASE);
+
+const SYNC_INTERVAL = 5000;
 const MOBILE_BREAKPOINT = 768;
 
 async function api(path, options = {}, token = "") {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+  if (!API_BASE) {
+    throw new Error(
+      "Chưa cấu hình VITE_API_BASE_URL trên Vercel hoặc file .env của frontend."
+    );
+  }
 
-  let data = null;
   try {
-    data = await res.json();
-  } catch {
-    data = null;
-  }
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+      ...options,
+    });
 
-  if (!res.ok) {
-    throw new Error(data?.message || `API error ${res.status}`);
-  }
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
 
-  return data;
+    if (!res.ok) {
+      throw new Error(data?.message || `API error ${res.status}`);
+    }
+
+    return data;
+  } catch (err) {
+    if (err instanceof TypeError && String(err.message).toLowerCase().includes("fetch")) {
+      throw new Error(
+        `Không kết nối được backend: ${API_BASE}. Kiểm tra Vercel Environment Variables, Root Directory hoặc backend Render.`
+      );
+    }
+    throw err;
+  }
 }
 
 function formatMoney(value) {
@@ -142,9 +163,7 @@ export default function App() {
   );
 
   const categories = useMemo(() => {
-    const set = new Set(
-      products.map((p) => p.category).filter(Boolean)
-    );
+    const set = new Set(products.map((p) => p.category).filter(Boolean));
     return ["Tất cả", ...Array.from(set)];
   }, [products]);
 
