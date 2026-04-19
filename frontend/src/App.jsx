@@ -8,6 +8,7 @@ const IS_LOCAL =
 const API_BASE = (ENV_API_BASE || (IS_LOCAL ? "http://localhost:5000" : "")).replace(/\/$/, "");
 
 console.log("API_BASE:", API_BASE);
+console.log("VITE_API_BASE_URL:", import.meta.env.VITE_API_BASE_URL);
 
 const SYNC_INTERVAL = 5000;
 const MOBILE_BREAKPOINT = 768;
