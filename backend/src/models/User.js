@@ -7,62 +7,35 @@ function hashPassword(password, salt) {
 
 const userSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    username: {
-      type: String,
-      required: true,
-      trim: true,
-      unique: true,
-      lowercase: true,
-    },
-    role: {
-      type: String,
-      enum: ['admin', 'staff'],
-      default: 'staff',
-    },
-    passwordHash: {
-      type: String,
-      required: true,
-    },
-    passwordSalt: {
-      type: String,
-      required: true,
-    },
-    isActive: {
-      type: Boolean,
-      default: true,
-    },
+    name: { type: String, required: true },
+    username: { type: String, required: true, unique: true, lowercase: true },
+    role: { type: String, enum: ['admin', 'staff'], default: 'staff' },
+    passwordHash: { type: String, required: true },
+    passwordSalt: { type: String, required: true },
+    isActive: { type: Boolean, default: true }
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-userSchema.methods.setPassword = function setPassword(password) {
+userSchema.methods.setPassword = function (password) {
   const salt = crypto.randomBytes(16).toString('hex');
   this.passwordSalt = salt;
   this.passwordHash = hashPassword(password, salt);
 };
 
-userSchema.methods.verifyPassword = function verifyPassword(password) {
-  const incomingHash = hashPassword(password, this.passwordSalt);
-  return incomingHash === this.passwordHash;
+userSchema.methods.verifyPassword = function (password) {
+  const hash = hashPassword(password, this.passwordSalt);
+  return hash === this.passwordHash;
 };
 
-userSchema.methods.toSafeJSON = function toSafeJSON() {
+userSchema.methods.toSafeJSON = function () {
   return {
     id: this._id.toString(),
     _id: this._id.toString(),
     name: this.name,
     username: this.username,
     role: this.role,
-    isActive: this.isActive,
-    createdAt: this.createdAt,
-    updatedAt: this.updatedAt,
+    isActive: this.isActive
   };
 };
 
