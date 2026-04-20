@@ -11,7 +11,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// test root
 app.get('/', (req, res) => {
   res.json({
     success: true,
@@ -19,7 +18,6 @@ app.get('/', (req, res) => {
   });
 });
 
-// api routes
 app.use('/api', apiRouter);
 
 const PORT = process.env.PORT || 5000;
