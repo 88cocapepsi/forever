@@ -72,22 +72,21 @@ function getTableOrderId(table) {
 }
 
 function getOrderTotal(order) {
-  return Number(order?.total || order?.subtotal || 0);
+  return Number(order?.subtotal || 0);
 }
 
 function getOrderQty(order) {
-  return (order?.items || []).reduce(
-    (sum, item) => sum + Number(item.quantity || item.qty || 0),
-    0
-  );
+  return (order?.items || []).reduce((sum, item) => sum + Number(item.quantity || item.qty || 0), 0);
 }
 
 function getUnreadCount(list, currentUserId) {
-  return (list || []).filter((n) => !(n.readBy || []).includes(currentUserId)).length;
+  const uid = currentUserId || "unknown-user";
+  return (list || []).filter((n) => !(n.readBy || []).includes(uid)).length;
 }
 
 function getNotificationRead(item, currentUserId) {
-  return (item.readBy || []).includes(currentUserId);
+  const uid = currentUserId || "unknown-user";
+  return (item.readBy || []).includes(uid);
 }
 
 function emptyProductForm() {
@@ -189,87 +188,6 @@ function normalizeIncomingTable(table) {
   };
 }
 
-function normalizeOrderForUI(order) {
-  const safeOrder = order && typeof order === "object" ? order : {};
-  const items = Array.isArray(safeOrder.items)
-    ? safeOrder.items.map((item, index) => ({
-        ...item,
-        product: item.product || item.productId || item._id || `${item.name || "item"}-${index}`,
-        productId: item.productId || item.product || item._id || item.name || '',
-        quantity: Number(item.quantity || item.qty || 0),
-        qty: Number(item.qty || item.quantity || 0),
-      }))
-    : [];
-
-  const subtotal = Number(
-    safeOrder.subtotal ||
-      items.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0)
-  );
-
-  return {
-    ...safeOrder,
-    items,
-    subtotal,
-    total: Number(safeOrder.total || subtotal),
-  };
-}
-
-function buildEmptyCurrentOrder() {
-  return {
-    items: [],
-    subtotal: 0,
-    total: 0,
-    discount: 0,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-function buildOrderPatchFromItems(items) {
-  const normalizedItems = (items || []).map((item) => ({
-    productId: item.productId || item.product || item._id || item.name || '',
-    product: item.product || item.productId || item._id || item.name || '',
-    name: item.name || '',
-    price: Number(item.price || 0),
-    quantity: Number(item.quantity || item.qty || 0),
-    qty: Number(item.qty || item.quantity || 0),
-    note: item.note || '',
-  }));
-
-  const subtotal = normalizedItems.reduce(
-    (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || item.qty || 0),
-    0
-  );
-
-  return {
-    items: normalizedItems,
-    subtotal,
-    total: subtotal,
-    discount: 0,
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-
-const LOCAL_NOTIFICATIONS_KEY = "forever_local_notifications";
-
-function loadLocalNotifications() {
-  try {
-    const raw = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalNotifications(list) {
-  try {
-    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(Array.isArray(list) ? list : []));
-  } catch {
-    // ignore localStorage write error
-  }
-}
-
 export default function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < MOBILE_BREAKPOINT);
 
@@ -299,7 +217,7 @@ export default function App() {
   const [warehouseLogs, setWarehouseLogs] = useState([]);
   const [inventoryLogs, setInventoryLogs] = useState([]);
   const [users, setUsers] = useState([]);
-  const [notifications, setNotifications] = useState(() => loadLocalNotifications());
+  const [notifications, setNotifications] = useState([]);
   const [historyOrders, setHistoryOrders] = useState([]);
   const [reportSummary, setReportSummary] = useState(null);
 
@@ -326,7 +244,10 @@ export default function App() {
   const lastSeenNotificationIdRef = useRef(null);
 
   const isAdmin = user?.role === "admin";
-  const unreadCount = getUnreadCount(notifications, user?.id);
+  const unreadCount = getUnreadCount(
+    notifications,
+    user?.id || user?._id || user?.username
+  );
 
   const selectedTable = useMemo(
     () => tables.find((t) => t._id === selectedTableId) || null,
@@ -369,10 +290,6 @@ export default function App() {
     const t = setTimeout(() => setToast(""), 3000);
     return () => clearTimeout(t);
   }, [toast]);
-  useEffect(() => {
-    saveLocalNotifications(notifications);
-  }, [notifications]);
-
 
   useEffect(() => {
     if (token) {
@@ -381,7 +298,6 @@ export default function App() {
       stopSync();
     }
     return () => stopSync();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => {
@@ -397,22 +313,25 @@ export default function App() {
   useEffect(() => {
     if (!selectedTableId || !token) return;
     ensureCurrentOrder(selectedTableId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTableId, tables.length, token]);
 
   async function handleLogin(e) {
     e.preventDefault();
     setError("");
     setLoading(true);
+
+    const username = String(loginForm.username || "").trim();
+    const password = String(loginForm.password || "").trim();
+
     try {
       const data = await api("/api/auth/login", {
         method: "POST",
-        body: JSON.stringify(loginForm),
+        body: JSON.stringify({ username, password }),
       });
 
-      localStorage.setItem("forever_token", data.token);
+      localStorage.setItem("forever_token", data.token || "__backend__");
       localStorage.setItem("forever_user", JSON.stringify(data.user));
-      setToken(data.token);
+      setToken(data.token || "__backend__");
       setUser(data.user);
       setToast("Đăng nhập thành công");
     } catch (err) {
@@ -464,7 +383,11 @@ export default function App() {
     setSyncing(true);
 
     try {
-      const tasks = [api("/api/tables", {}, token), api("/api/products", {}, token)];
+      const tasks = [
+        api("/api/tables", {}, token),
+        api("/api/products", {}, token),
+        api("/api/notifications?limit=100", {}, token),
+      ];
 
       if (isAdmin) {
         tasks.push(api("/api/auth/users", {}, token));
@@ -474,23 +397,52 @@ export default function App() {
 
       const nextTables = results[0].status === "fulfilled" ? results[0].value : [];
       const nextProducts = results[1].status === "fulfilled" ? results[1].value : [];
-      const nextUsers = isAdmin && results[2]?.status === "fulfilled" ? results[2].value : [];
+      const nextNotifications = results[2].status === "fulfilled" ? results[2].value : [];
 
       setTables(
         Array.isArray(nextTables) ? nextTables.map((table) => normalizeIncomingTable(table)) : []
       );
       setProducts(Array.isArray(nextProducts) ? nextProducts : []);
-      setUsers(Array.isArray(nextUsers) ? nextUsers : []);
-
       setHistoryOrders([]);
       setReportSummary(null);
       setWarehouseItems([]);
       setWarehouseLogs([]);
       setInventoryLogs([]);
-      setNotifications([]);
+
+      const notificationList = Array.isArray(nextNotifications) ? nextNotifications : [];
+      setNotifications(notificationList);
+
+      if (notificationList.length > 0) {
+        const latest = notificationList[0];
+
+        if (
+          lastSeenNotificationIdRef.current &&
+          latest?._id &&
+          latest._id !== lastSeenNotificationIdRef.current
+        ) {
+          setToast(latest.message || "Có thông báo mới");
+        }
+
+        if (latest?._id) {
+          lastSeenNotificationIdRef.current = latest._id;
+        }
+      }
+
+      if (isAdmin) {
+        setUsers(Array.isArray(results[3]?.value) ? results[3].value : []);
+      } else {
+        setUsers([]);
+      }
 
       if (selectedTableId) {
-        await refreshCurrentOrderForTable(selectedTableId, nextTables);
+        const selected = (Array.isArray(nextTables) ? nextTables : []).find(
+          (t) => t._id === selectedTableId
+        );
+        if (selected?.currentOrder && typeof selected.currentOrder === "object") {
+          setCurrentOrder(selected.currentOrder);
+        } else {
+          setCurrentOrder(null);
+        }
       }
 
       setError("");
@@ -503,107 +455,101 @@ export default function App() {
 
   async function refreshCurrentOrderForTable(tableId, tableList = tables) {
     try {
-      const normalizedTableList = Array.isArray(tableList)
-        ? tableList.map((table) => normalizeIncomingTable(table))
-        : [];
-      const table = normalizedTableList.find((t) => t._id === tableId);
-
+      const table = (tableList || []).find((t) => t._id === tableId);
       if (!table) {
-        setCurrentOrder(buildEmptyCurrentOrder());
-        return buildEmptyCurrentOrder();
+        setCurrentOrder(null);
+        return null;
       }
 
-      const nextOrder = normalizeOrderForUI(table.currentOrder || buildEmptyCurrentOrder());
-      if (tableId === selectedTableId) setCurrentOrder(nextOrder);
-      return nextOrder;
+      if (table.currentOrder && typeof table.currentOrder === "object") {
+        if (tableId === selectedTableId) setCurrentOrder(table.currentOrder);
+        return table.currentOrder;
+      }
+
+      setCurrentOrder(null);
+      return null;
     } catch {
-      const emptyOrder = buildEmptyCurrentOrder();
-      if (tableId === selectedTableId) setCurrentOrder(emptyOrder);
-      return emptyOrder;
+      if (tableId === selectedTableId) setCurrentOrder(null);
+      return null;
     }
   }
 
   async function ensureCurrentOrder(tableId) {
-    if (!tableId) return buildEmptyCurrentOrder();
+    if (!tableId) return null;
 
     const table = tables.find((t) => t._id === tableId);
-    if (!table) return buildEmptyCurrentOrder();
+    if (!table) return null;
 
-    const order = normalizeOrderForUI(table.currentOrder || buildEmptyCurrentOrder());
-    setCurrentOrder(order);
-    return order;
-  }
-
-  async function updateTableOrder(tableId, items, successMessage = "") {
-    const table = tables.find((t) => t._id === tableId);
-    if (!table) {
-      throw new Error("Không tìm thấy bàn");
+    if (table.currentOrder && typeof table.currentOrder === "object") {
+      setCurrentOrder(table.currentOrder);
+      return table.currentOrder;
     }
 
-    const orderPatch = buildOrderPatchFromItems(items);
-    const nextStatus = orderPatch.items.length > 0 ? "serving" : "empty";
-
-    const updatedTableResponse = await api(
-      `/api/tables/${tableId}`,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          name: table.name,
-          area: table.area || normalizeArea(table),
-          status: nextStatus,
-          note: table.note || "",
-          customerName: table.customerName || "",
-          currentOrder: orderPatch,
-        }),
-      },
-      token
-    );
-
-    const updatedOrder = normalizeOrderForUI(updatedTableResponse?.currentOrder || orderPatch);
-    setCurrentOrder(updatedOrder);
-    await syncAll();
-
-    if (successMessage) {
-      setToast(successMessage);
-    }
-
-    return updatedOrder;
+    const fallbackOrder = {
+      items: [],
+      subtotal: 0,
+      discount: 0,
+      total: 0,
+    };
+    setCurrentOrder(fallbackOrder);
+    return fallbackOrder;
   }
 
   async function addProductToOrder(product) {
     try {
       if (!selectedTableId) {
-        setToast("Vui lòng chọn bàn trước");
+        setToast("Chọn bàn trước");
         return;
       }
 
-      const order = await ensureCurrentOrder(selectedTableId);
+      let order = currentOrder;
+      if (!order || typeof order !== "object") {
+        order = await ensureCurrentOrder(selectedTableId);
+      }
+
       const items = Array.isArray(order?.items) ? [...order.items] : [];
-      const productKey = product._id || product.name;
-      const index = items.findIndex(
-        (item) => (item.productId || item.product || item.name) === productKey || item.name === product.name
-      );
+      const index = items.findIndex((i) => i.name === product.name);
 
       if (index >= 0) {
-        const currentQty = Number(items[index].quantity || items[index].qty || 0);
         items[index] = {
           ...items[index],
-          quantity: currentQty + 1,
-          qty: currentQty + 1,
+          quantity: Number(items[index].quantity || 0) + 1,
         };
       } else {
         items.push({
-          product: productKey,
-          productId: productKey,
           name: product.name,
           price: Number(product.price || 0),
           quantity: 1,
-          qty: 1,
-          note: "",
         });
       }
 
-      await updateTableOrder(selectedTableId, items);
+      const subtotal = items.reduce(
+        (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0),
+        0
+      );
+
+      const nextOrder = {
+        ...(order || {}),
+        items,
+        subtotal,
+        discount: Number(order?.discount || 0),
+        total: subtotal - Number(order?.discount || 0),
+      };
+
+      await api(
+        `/api/tables/${selectedTableId}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            currentOrder: nextOrder,
+            status: items.length > 0 ? "serving" : "empty",
+          }),
+        },
+        token
+      );
+
+      setCurrentOrder(nextOrder);
+      await syncAll();
     } catch (err) {
       setError(err.message || "Không thêm món được");
     }
@@ -611,28 +557,49 @@ export default function App() {
 
   async function updateOrderItemQuantity(item, nextQty) {
     try {
-      if (!selectedTableId) return;
+      if (!selectedTableId || !currentOrder) return;
 
-      const order = await ensureCurrentOrder(selectedTableId);
-      const items = Array.isArray(order?.items) ? [...order.items] : [];
-      const itemKey = item.product || item.productId || item.name;
+      const items = Array.isArray(currentOrder.items) ? [...currentOrder.items] : [];
+      const index = items.findIndex((i) => i.name === item.name);
 
-      const nextItems = items
-        .map((row) => {
-          const rowKey = row.product || row.productId || row.name;
-          if (rowKey !== itemKey) return row;
+      if (index < 0) return;
 
-          if (nextQty <= 0) return null;
+      if (nextQty <= 0) {
+        items.splice(index, 1);
+      } else {
+        items[index] = {
+          ...items[index],
+          quantity: nextQty,
+        };
+      }
 
-          return {
-            ...row,
-            quantity: Number(nextQty),
-            qty: Number(nextQty),
-          };
-        })
-        .filter(Boolean);
+      const subtotal = items.reduce(
+        (sum, row) => sum + Number(row.price || 0) * Number(row.quantity || 0),
+        0
+      );
 
-      await updateTableOrder(selectedTableId, nextItems);
+      const nextOrder = {
+        ...currentOrder,
+        items,
+        subtotal,
+        discount: Number(currentOrder.discount || 0),
+        total: subtotal - Number(currentOrder.discount || 0),
+      };
+
+      await api(
+        `/api/tables/${selectedTableId}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            currentOrder: items.length ? nextOrder : null,
+            status: items.length ? "serving" : "empty",
+          }),
+        },
+        token
+      );
+
+      setCurrentOrder(items.length ? nextOrder : null);
+      await syncAll();
     } catch (err) {
       setError(err.message || "Không cập nhật món được");
     }
@@ -640,22 +607,36 @@ export default function App() {
 
   async function payCurrentOrder() {
     try {
-      const order = normalizeOrderForUI(currentOrder || buildEmptyCurrentOrder());
-
-      if (!(order.items || []).length) {
+      if (!selectedTableId || !(currentOrder?.items || []).length) {
         setToast("Đơn hiện tại đang trống");
         return;
       }
 
       const paidOrder = {
-        ...order,
+        ...currentOrder,
         paidAt: new Date().toISOString(),
       };
 
+      try {
+        await createNotification({
+          type: "payment",
+          title: "Thanh toán bàn",
+          message: `${selectedTable?.name || "Bàn"} - ${formatMoney(paidOrder.subtotal)}`,
+          level: "success",
+        });
+      } catch {
+        // ignore
+      }
+
       printBill(paidOrder, selectedTable?.name || "Bàn", user?.name || "admin", false);
 
-      await api(`/api/tables/${selectedTableId}/clear-order`, { method: "PATCH" }, token);
-      setCurrentOrder(buildEmptyCurrentOrder());
+      await api(
+        `/api/tables/${selectedTableId}/clear-order`,
+        { method: "PATCH" },
+        token
+      );
+
+      setCurrentOrder(null);
       await syncAll();
       setToast("Thanh toán thành công");
     } catch (err) {
@@ -663,51 +644,64 @@ export default function App() {
     }
   }
 
-
-  async function createNotification(payload = {}) {
-    const nextItem = {
-      _id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      title: payload.title || 'Thông báo',
-      message: payload.message || '',
-      type: payload.type || 'system',
-      level: payload.level || 'info',
-      createdAt: new Date().toISOString(),
-      readBy: [],
-    };
-
-    setNotifications((prev) => [nextItem, ...(Array.isArray(prev) ? prev : [])]);
-    return { success: true, notification: nextItem };
+  async function createNotification(payload) {
+    return api(
+      "/api/notifications",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      token
+    );
   }
 
   async function markNotificationRead(id) {
-    setNotifications((prev) =>
-      (Array.isArray(prev) ? prev : []).map((item) =>
-        item._id === id
-          ? {
-              ...item,
-              readBy: Array.from(new Set([...(item.readBy || []), user?.id || 'local-user'])),
-            }
-          : item
-      )
-    );
-    return { success: true };
+    try {
+      const updated = await api(
+        `/api/notifications/${id}/read`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            userId: user?.id || user?._id || user?.username || "unknown-user",
+          }),
+        },
+        token
+      );
+      setNotifications((prev) =>
+        prev.map((item) => (item._id === id ? updated : item))
+      );
+    } catch (err) {
+      setError(err.message || "Không đánh dấu đã đọc được");
+    }
   }
 
   async function markAllNotificationsRead() {
-    setNotifications((prev) =>
-      (Array.isArray(prev) ? prev : []).map((item) => ({
-        ...item,
-        readBy: Array.from(new Set([...(item.readBy || []), user?.id || 'local-user'])),
-      }))
-    );
-    setToast('Đã đánh dấu tất cả thông báo là đã đọc');
-    return { success: true };
+    try {
+      await api(
+        "/api/notifications/read-all/all",
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            userId: user?.id || user?._id || user?.username || "unknown-user",
+          }),
+        },
+        token
+      );
+      await syncAll();
+    } catch (err) {
+      setError(err.message || "Không cập nhật được tất cả thông báo");
+    }
   }
-
 
   async function seedDefaultTables() {
     try {
       await api("/api/tables/seed-default", { method: "POST" }, token);
+      await createNotification({
+        type: "system",
+        title: "Khởi tạo bàn",
+        message: "Đã tạo bộ bàn mặc định",
+        level: "info",
+      });
       await syncAll();
       setToast("Đã tạo bàn mặc định");
     } catch (err) {
@@ -786,24 +780,28 @@ export default function App() {
   }
 
   async function importProductStock() {
-    setToast("Hiện backend chưa bật nhập kho sản phẩm");
+    setToast("Backend hiện tại không bật nhập kho sản phẩm");
   }
-
 
   async function saveWarehouseItem() {
-    setToast("Hiện backend chưa bật kho riêng");
+    setToast("Backend hiện tại không bật kho riêng");
   }
 
-
-  function startEditWarehouse() {
-    setToast("Hiện backend chưa bật kho riêng");
+  function startEditWarehouse(item) {
+    setEditingWarehouseId(item._id);
+    setWarehouseForm({
+      name: item.name || "",
+      quantity: item.quantity ?? "",
+      unit: item.unit || "cái",
+      note: item.note || "",
+    });
+    setActiveMainTab("admin");
+    setActiveAdminTab("warehouse");
   }
-
 
   async function deleteWarehouseItem() {
-    setToast("Hiện backend chưa bật kho riêng");
+    setToast("Backend hiện tại không bật kho riêng");
   }
-
 
   async function saveUser() {
     try {
@@ -1112,6 +1110,7 @@ export default function App() {
       normalizedTable.currentOrder && typeof normalizedTable.currentOrder === "object"
         ? normalizedTable.currentOrder
         : null;
+
     const selected = normalizedTable._id === selectedTableId;
     const busy = getTableBusy(normalizedTable);
 
@@ -1210,11 +1209,13 @@ export default function App() {
 
         <div className="menu-grid">
           {filteredProducts.map((item) => (
-            <button key={item._id} className="menu-card" onClick={() => addProductToOrder(item)}>
+            <button
+              key={item._id || item.name}
+              className="menu-card"
+              onClick={() => addProductToOrder(item)}
+            >
               <div className="menu-card-name">{item.name}</div>
-              <div className="menu-card-cat">
-                {item.category} {item.unit ? `• ${item.unit}` : ""}
-              </div>
+              <div className="menu-card-cat">{item.category} • {item.unit || "ly"}</div>
               <div className="menu-card-price">{formatMoney(item.price)}</div>
             </button>
           ))}
@@ -1236,8 +1237,8 @@ export default function App() {
 
         <div className="order-list">
           {(currentOrder?.items || []).length ? (
-            currentOrder.items.map((item) => (
-              <div key={item.product || item.productId || item.name} className="order-row">
+            currentOrder.items.map((item, idx) => (
+              <div key={`${item.name}-${idx}`} className="order-row">
                 <div className="order-main">
                   <div className="order-name">{item.name}</div>
                   <div className="order-price">{formatMoney(item.price)}</div>
@@ -1246,14 +1247,24 @@ export default function App() {
                 <div className="qty-box">
                   <button
                     className="qty-btn"
-                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || item.qty || 0) - 1)}
+                    onClick={() =>
+                      updateOrderItemQuantity(
+                        item,
+                        Number(item.quantity || item.qty || 0) - 1
+                      )
+                    }
                   >
                     -
                   </button>
                   <span className="qty-num">{item.quantity || item.qty || 0}</span>
                   <button
                     className="qty-btn"
-                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || item.qty || 0) + 1)}
+                    onClick={() =>
+                      updateOrderItemQuantity(
+                        item,
+                        Number(item.quantity || item.qty || 0) + 1
+                      )
+                    }
                   >
                     +
                   </button>
@@ -1285,7 +1296,7 @@ export default function App() {
             className="btn"
             onClick={() => {
               if (!currentOrder) return setToast("Chưa có bill để in");
-              printBill(normalizeOrderForUI(currentOrder), selectedTable?.name || "Bàn", user?.name || "admin", true);
+              printBill(currentOrder, selectedTable?.name || "Bàn", user?.name || "admin", true);
             }}
           >
             In bill tạm
@@ -1439,7 +1450,7 @@ export default function App() {
                 <div>
                   <div className="list-name">{item.name}</div>
                   <div className="list-sub">
-                    {item.category} • {formatMoney(item.price)} {item.unit ? `• ${item.unit}` : ""}
+                    {item.category} • {formatMoney(item.price)} • {item.unit || "ly"}
                   </div>
                 </div>
                 <div className="row-actions">
@@ -1455,113 +1466,11 @@ export default function App() {
     );
   }
 
-
   function renderAdminWarehouse() {
     return (
-      <div className="admin-grid">
-        <div className="panel inner">
-          <div className="panel-title small-title">
-            {editingWarehouseId ? "Sửa kho riêng" : "Thêm kho riêng"}
-          </div>
-          <div className="form-col">
-            <input
-              className="input"
-              placeholder="Tên hàng kho"
-              value={warehouseForm.name}
-              onChange={(e) => setWarehouseForm((p) => ({ ...p, name: e.target.value }))}
-            />
-            <input
-              className="input"
-              type="number"
-              placeholder="Số lượng"
-              value={warehouseForm.quantity}
-              onChange={(e) => setWarehouseForm((p) => ({ ...p, quantity: e.target.value }))}
-            />
-            <input
-              className="input"
-              placeholder="Đơn vị"
-              value={warehouseForm.unit}
-              onChange={(e) => setWarehouseForm((p) => ({ ...p, unit: e.target.value }))}
-            />
-            <textarea
-              className="input"
-              rows={3}
-              placeholder="Ghi chú"
-              value={warehouseForm.note}
-              onChange={(e) => setWarehouseForm((p) => ({ ...p, note: e.target.value }))}
-            />
-
-            <div className="row-actions">
-              <button className="btn btn-primary" onClick={saveWarehouseItem}>
-                {editingWarehouseId ? "Cập nhật" : "Thêm kho"}
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  setWarehouseForm(emptyWarehouseForm());
-                  setEditingWarehouseId(null);
-                }}
-              >
-                Mới
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="panel inner">
-          <div className="panel-head stack-mobile">
-            <div className="panel-title small-title">Danh sách kho riêng</div>
-            <input
-              className="input small"
-              placeholder="Tìm kho..."
-              value={warehouseKeyword}
-              onChange={(e) => setWarehouseKeyword(e.target.value)}
-            />
-          </div>
-
-          <div className="list-table">
-            {filteredWarehouse.map((item) => (
-              <div key={item._id} className="list-row">
-                <div>
-                  <div className="list-name">{item.name}</div>
-                  <div className="list-sub">
-                    {item.quantity} {item.unit} • {item.note || "Không ghi chú"}
-                  </div>
-                </div>
-                <div className="row-actions">
-                  <button className="btn small" onClick={() => startEditWarehouse(item)}>
-                    Sửa
-                  </button>
-                  <button className="btn small danger" onClick={() => deleteWarehouseItem(item._id)}>
-                    Xóa
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {!!warehouseLogs.length && (
-            <>
-              <div className="divider" />
-              <div className="panel-title small-title">Log kho riêng</div>
-              <div className="list-table">
-                {warehouseLogs.slice(0, 20).map((log) => (
-                  <div key={log._id} className="list-row">
-                    <div>
-                      <div className="list-name">
-                        {log.itemName} • {log.action}
-                      </div>
-                      <div className="list-sub">
-                        {log.quantity} {log.unit} • {log.note || ""} •{" "}
-                        {new Date(log.createdAt).toLocaleString("vi-VN")}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+      <div className="panel inner">
+        <div className="panel-title small-title">Kho riêng</div>
+        <div className="empty-box">Backend hiện tại chưa bật kho riêng.</div>
       </div>
     );
   }
@@ -1627,21 +1536,8 @@ export default function App() {
   function renderAdminLogs() {
     return (
       <div className="panel inner">
-        <div className="panel-title small-title">Log tồn kho sản phẩm</div>
-        <div className="list-table">
-          {inventoryLogs.map((log) => (
-            <div key={log._id} className="list-row">
-              <div>
-                <div className="list-name">
-                  {log.productName} • {log.type}
-                </div>
-                <div className="list-sub">
-                  {log.quantity} • {log.note || ""} • {new Date(log.createdAt).toLocaleString("vi-VN")}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <div className="panel-title small-title">Log</div>
+        <div className="empty-box">Backend hiện tại chưa bật log tồn kho.</div>
       </div>
     );
   }
@@ -1659,16 +1555,30 @@ export default function App() {
               Sản phẩm
             </button>
             <button
+              className={`sub-tab ${activeAdminTab === "warehouse" ? "active" : ""}`}
+              onClick={() => setActiveAdminTab("warehouse")}
+            >
+              Kho riêng
+            </button>
+            <button
               className={`sub-tab ${activeAdminTab === "users" ? "active" : ""}`}
               onClick={() => setActiveAdminTab("users")}
             >
               Tài khoản
             </button>
+            <button
+              className={`sub-tab ${activeAdminTab === "logs" ? "active" : ""}`}
+              onClick={() => setActiveAdminTab("logs")}
+            >
+              Log
+            </button>
           </div>
         </div>
 
         {activeAdminTab === "products" && renderAdminProducts()}
+        {activeAdminTab === "warehouse" && renderAdminWarehouse()}
         {activeAdminTab === "users" && renderAdminUsers()}
+        {activeAdminTab === "logs" && renderAdminLogs()}
       </div>
     );
   }
@@ -1677,21 +1587,20 @@ export default function App() {
     return (
       <div className="panel">
         <div className="panel-title">Báo cáo</div>
-        <div className="empty-box">Hiện backend chưa bật báo cáo. Anh đang dùng bản tối giản để tránh lỗi 404.</div>
+        <div className="empty-box">Backend hiện tại chưa bật báo cáo tổng hợp.</div>
       </div>
     );
   }
-
 
   function renderNotifications() {
     return (
       <div className="panel">
         <div className="panel-head stack-mobile">
-          <div>
-            <div className="panel-title">Thông báo</div>
-            <div className="panel-sub">Đang dùng thông báo nội bộ trên máy hiện tại</div>
-          </div>
+          <div className="panel-title">Thông báo đồng bộ</div>
           <div className="row-actions">
+            <button className="btn small" onClick={syncAll}>
+              Làm mới
+            </button>
             <button className="btn small" onClick={markAllNotificationsRead}>
               Đọc tất cả
             </button>
@@ -1701,15 +1610,19 @@ export default function App() {
         <div className="list-table">
           {notifications.length ? (
             notifications.map((item) => {
-              const isRead = getNotificationRead(item, user?.id || 'local-user');
+              const isRead = getNotificationRead(
+                item,
+                user?.id || user?._id || user?.username
+              );
               return (
-                <div key={item._id} className={`list-row notification-row ${isRead ? '' : 'unread'}`}>
+                <div key={item._id} className={`list-row notification-row ${isRead ? "" : "unread"}`}>
                   <div>
                     <div className="list-name">
-                      {item.title || 'Thông báo'} {item.level ? `• ${item.level}` : ''}
+                      {item.title || "Thông báo"} {item.level ? `• ${item.level}` : ""}
                     </div>
                     <div className="list-sub">
-                      {item.message || ''} • {new Date(item.createdAt).toLocaleString('vi-VN')}
+                      {item.message || ""} •{" "}
+                      {new Date(item.createdAt).toLocaleString("vi-VN")}
                     </div>
                   </div>
                   {!isRead && (
@@ -1721,13 +1634,12 @@ export default function App() {
               );
             })
           ) : (
-            <div className="empty-box">Chưa có thông báo nào</div>
+            <div className="empty-box">Chưa có thông báo</div>
           )}
         </div>
       </div>
     );
   }
-
 
   function renderMobileHomeButton() {
     if (!isMobile) return null;
@@ -1820,11 +1732,11 @@ function StyleTag() {
         font-size: 28px;
         font-weight: 800;
         color: #6c4427;
+        margin-bottom: 6px;
       }
       .brand-sub {
-        color: #8c6b4b;
-        margin-top: 6px;
-        margin-bottom: 22px;
+        color: #8a684e;
+        margin-bottom: 20px;
       }
       .form-col {
         display: flex;
@@ -1833,277 +1745,265 @@ function StyleTag() {
       }
       .input {
         width: 100%;
-        border: 1px solid #d9c2a6;
-        border-radius: 16px;
-        background: #fffdfb;
-        padding: 13px 14px;
-        outline: none;
-      }
-      .input:focus {
-        border-color: #9a6638;
-        box-shadow: 0 0 0 3px rgba(154,102,56,0.12);
-      }
-      .input.small { padding: 10px 12px; }
-      .btn {
-        border: 0;
+        border: 1px solid #dcc3aa;
+        background: #fffdf9;
         border-radius: 16px;
         padding: 12px 14px;
-        background: #e9dac7;
-        color: #53331e;
-        font-weight: 700;
+        color: #2e2018;
+        outline: none;
+      }
+      .input.small {
+        padding: 10px 12px;
+        min-width: 120px;
+      }
+      .btn {
+        border: none;
+        border-radius: 16px;
+        padding: 11px 16px;
+        background: #dbc1a6;
+        color: #4d2f1b;
         cursor: pointer;
+        font-weight: 700;
+      }
+      .btn.small {
+        padding: 9px 12px;
+        font-size: 13px;
       }
       .btn-primary {
-        background: linear-gradient(180deg, #8d5a2c 0%, #734620 100%);
+        background: linear-gradient(135deg, #8a5a34, #6b4022);
         color: #fff;
       }
       .btn-lg {
-        min-height: 52px;
-        font-size: 16px;
-      }
-      .btn.small {
-        padding: 8px 12px;
-        border-radius: 12px;
-        font-size: 14px;
-      }
-      .danger {
-        background: #f4d7d7 !important;
-        color: #8c2a2a !important;
+        padding: 13px 18px;
       }
       .error-box {
         margin-top: 14px;
-        background: #fff1f1;
-        border: 1px solid #f1c9c9;
-        color: #8a2e2e;
-        padding: 12px 14px;
+        background: #ffe1df;
+        color: #a12f2f;
+        border: 1px solid #ffc0bc;
         border-radius: 16px;
+        padding: 10px 12px;
       }
-      .error-box.outer { margin-bottom: 12px; }
+      .error-box.outer {
+        margin-bottom: 12px;
+      }
       .toast {
         position: fixed;
-        right: 14px;
-        top: 14px;
-        z-index: 40;
-        background: #2f2017;
-        color: white;
-        padding: 12px 14px;
-        border-radius: 14px;
-        box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+        right: 16px;
+        top: 16px;
+        z-index: 50;
+        background: #3d2a1d;
+        color: #fff;
+        padding: 12px 16px;
+        border-radius: 16px;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.18);
       }
       .topbar {
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 12px;
-        background: rgba(255,255,255,0.78);
-        border: 1px solid #e2d2c0;
-        border-radius: 22px;
         padding: 14px 16px;
-        box-shadow: 0 10px 30px rgba(79,53,30,0.07);
+        border-radius: 24px;
+        background: rgba(255,255,255,0.72);
+        border: 1px solid #ead7c4;
+        box-shadow: 0 8px 24px rgba(72,42,18,0.08);
+        margin-bottom: 14px;
       }
       .topbar-title {
         font-size: 24px;
-        font-weight: 900;
-        color: #6f4726;
+        font-weight: 800;
+        color: #6c4427;
       }
       .topbar-sub {
-        color: #88684d;
+        color: #8a684e;
         font-size: 14px;
-        margin-top: 4px;
       }
       .topbar-actions {
         display: flex;
-        gap: 8px;
+        align-items: center;
+        gap: 10px;
         flex-wrap: wrap;
       }
       .chip {
-        border: 1px solid #d9c4aa;
+        border: none;
         border-radius: 999px;
         padding: 10px 14px;
-        background: #fffaf4;
-        color: #694224;
-        font-weight: 700;
+        background: #f1e4d5;
+        color: #6c4427;
         cursor: pointer;
+        font-weight: 700;
+      }
+      .chip.danger {
+        background: #fee0dd;
+        color: #a1372c;
       }
       .main-tabs {
         display: flex;
         gap: 10px;
-        margin-top: 14px;
         margin-bottom: 14px;
       }
-      .main-tab {
-        border: 0;
-        border-radius: 16px;
+      .main-tab,
+      .sub-tab {
+        border: none;
+        border-radius: 18px;
         padding: 12px 16px;
-        background: #e7d8c7;
-        color: #66401f;
-        font-weight: 800;
+        background: #ead7c4;
+        color: #70482a;
         cursor: pointer;
+        font-weight: 700;
       }
-      .main-tab.active {
-        background: #7b4d27;
+      .main-tab.active,
+      .sub-tab.active {
+        background: linear-gradient(135deg, #8a5a34, #6b4022);
         color: #fff;
       }
-      .sales-layout.desktop-layout {
-        display: grid;
-        grid-template-columns: 1.1fr 1.3fr 1fr;
-        gap: 14px;
-      }
-      .sales-layout.mobile-layout {
-        padding-bottom: 84px;
-      }
       .panel {
-        background: rgba(255,255,255,0.86);
-        border: 1px solid #e4d4c1;
+        background: rgba(255,255,255,0.78);
+        border: 1px solid #ead7c4;
         border-radius: 24px;
-        padding: 14px;
-        box-shadow: 0 12px 30px rgba(85,57,32,0.06);
+        padding: 16px;
+        box-shadow: 0 8px 24px rgba(72,42,18,0.08);
       }
       .panel.inner {
-        background: #fffaf5;
+        min-height: 100%;
       }
       .panel-head {
         display: flex;
-        align-items: center;
         justify-content: space-between;
+        align-items: center;
         gap: 12px;
-        margin-bottom: 12px;
+        margin-bottom: 14px;
       }
       .panel-title {
-        font-size: 18px;
-        font-weight: 900;
-        color: #6c4322;
+        font-size: 20px;
+        font-weight: 800;
+        color: #6c4427;
       }
-      .small-title {
-        font-size: 16px;
+      .panel-title.small-title {
+        font-size: 18px;
       }
       .panel-sub {
-        color: #8f6b4b;
+        color: #8a684e;
         font-size: 13px;
+        margin-top: 4px;
       }
-      .panel-tools,
-      .admin-tabs,
-      .row-actions {
+      .panel-tools {
         display: flex;
-        gap: 8px;
+        gap: 10px;
         flex-wrap: wrap;
       }
-      .sub-tab {
-        border: 0;
-        border-radius: 12px;
-        background: #e8dac8;
-        color: #68401e;
-        padding: 10px 12px;
-        font-weight: 700;
-        cursor: pointer;
+      .sales-layout.desktop-layout {
+        display: grid;
+        grid-template-columns: 1.15fr 1fr 1fr;
+        gap: 14px;
       }
-      .sub-tab.active {
-        background: #7b4d27;
-        color: white;
+      .col {
+        min-width: 0;
+      }
+      .table-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+      }
+      .table-card {
+        border: 1px solid #e3cfbb;
+        background: #fffaf5;
+        border-radius: 20px;
+        padding: 14px;
+        text-align: left;
+        cursor: pointer;
+        transition: 0.18s ease;
+      }
+      .table-card:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 10px 20px rgba(85,49,22,0.08);
+      }
+      .table-card.selected {
+        border-color: #8a5a34;
+        box-shadow: 0 0 0 2px rgba(138,90,52,0.15);
+      }
+      .table-card.busy {
+        background: #fff1e4;
+      }
+      .table-name {
+        font-weight: 800;
+        color: #6c4427;
+        margin-bottom: 6px;
+      }
+      .table-meta {
+        font-size: 13px;
+        color: #866650;
+      }
+      .table-total {
+        margin-top: 10px;
+        font-weight: 800;
+        color: #8a5a34;
       }
       .zone-title {
         font-size: 14px;
         font-weight: 800;
-        color: #805635;
-        margin: 14px 0 8px;
-      }
-      .table-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-      }
-      .table-card {
-        text-align: left;
-        border: 1px solid #e0cfba;
-        background: #fffdf9;
-        border-radius: 18px;
-        padding: 14px;
-        cursor: pointer;
-      }
-      .table-card.selected {
-        border-color: #8e5d33;
-        box-shadow: 0 0 0 3px rgba(142,93,51,0.12);
-      }
-      .table-card.busy {
-        background: linear-gradient(180deg, #fff6ea 0%, #f7e8d4 100%);
-      }
-      .table-name {
-        font-size: 16px;
-        font-weight: 900;
-      }
-      .table-meta {
-        margin-top: 6px;
-        color: #89694f;
-        font-size: 13px;
-      }
-      .table-total {
-        margin-top: 8px;
-        font-size: 16px;
-        font-weight: 900;
-        color: #7e4d23;
+        color: #8a684e;
+        margin: 16px 0 10px;
       }
       .menu-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+        gap: 12px;
       }
       .menu-card {
-        border: 1px solid #e0cfba;
-        background: #fffdf9;
-        border-radius: 18px;
+        border: 1px solid #e5d0bc;
+        background: #fffaf6;
+        border-radius: 20px;
         padding: 14px;
         text-align: left;
         cursor: pointer;
       }
-      .menu-card:disabled {
-        opacity: 0.55;
-        cursor: not-allowed;
-      }
       .menu-card-name {
-        font-size: 15px;
-        font-weight: 900;
+        font-weight: 800;
+        color: #6c4427;
+        margin-bottom: 6px;
       }
       .menu-card-cat {
-        margin-top: 5px;
-        color: #8a6b4f;
-        font-size: 12px;
+        color: #866650;
+        font-size: 13px;
+        margin-bottom: 10px;
       }
       .menu-card-price {
-        margin-top: 8px;
-        color: #7a4920;
-        font-size: 16px;
-        font-weight: 900;
+        color: #8a5a34;
+        font-weight: 800;
       }
       .order-panel {
         display: flex;
         flex-direction: column;
       }
       .order-total-top {
-        font-size: 18px;
-        font-weight: 900;
-        color: #7c4a21;
+        font-weight: 800;
+        color: #8a5a34;
       }
       .order-list {
         display: flex;
         flex-direction: column;
         gap: 10px;
-        min-height: 240px;
       }
       .order-row {
         display: grid;
         grid-template-columns: 1fr auto auto;
         gap: 10px;
         align-items: center;
-        border: 1px solid #ebdccb;
+        border: 1px solid #e9d7c7;
+        border-radius: 18px;
+        padding: 12px;
         background: #fffdf9;
-        border-radius: 16px;
-        padding: 10px;
       }
-      .order-name { font-weight: 800; }
+      .order-name {
+        font-weight: 700;
+        color: #6c4427;
+      }
       .order-price {
-        margin-top: 4px;
+        color: #88674d;
         font-size: 13px;
-        color: #8a6b50;
+        margin-top: 3px;
       }
       .qty-box {
         display: flex;
@@ -2111,59 +2011,56 @@ function StyleTag() {
         gap: 8px;
       }
       .qty-btn {
-        width: 32px;
-        height: 32px;
-        border: 0;
+        border: none;
         border-radius: 10px;
-        background: #ebdbc8;
+        width: 30px;
+        height: 30px;
         cursor: pointer;
-        font-weight: 900;
+        background: #ecdccc;
+        color: #6c4427;
+        font-weight: 800;
       }
       .qty-num {
-        min-width: 18px;
+        min-width: 22px;
         text-align: center;
-        font-weight: 900;
+        font-weight: 700;
       }
       .order-line-total {
-        font-weight: 900;
-        color: #6e431f;
-        white-space: nowrap;
-      }
-      .empty-box {
-        padding: 18px;
-        border: 1px dashed #d8c5af;
-        border-radius: 18px;
-        color: #8b6b4b;
-        text-align: center;
+        font-weight: 800;
+        color: #8a5a34;
       }
       .summary-box {
-        margin-top: 12px;
-        background: #fff8ef;
-        border: 1px solid #eadac8;
-        border-radius: 18px;
-        padding: 12px;
+        border-top: 1px dashed #d7c4b1;
+        margin-top: 14px;
+        padding-top: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
       .summary-row {
         display: flex;
         justify-content: space-between;
-        padding: 4px 0;
+        gap: 10px;
       }
       .summary-row.total {
-        margin-top: 6px;
-        padding-top: 10px;
-        border-top: 1px dashed #d7c2ab;
-        font-size: 16px;
+        font-size: 18px;
+        font-weight: 800;
+        color: #6c4427;
       }
       .sticky-actions {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 8px;
-        margin-top: 12px;
+        display: flex;
+        gap: 10px;
+        margin-top: 14px;
       }
       .admin-grid {
         display: grid;
-        grid-template-columns: 1fr 1.2fr;
+        grid-template-columns: 1fr 1fr;
         gap: 14px;
+      }
+      .admin-tabs {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
       }
       .list-table {
         display: flex;
@@ -2173,71 +2070,93 @@ function StyleTag() {
       .list-row {
         display: flex;
         justify-content: space-between;
-        align-items: center;
         gap: 12px;
+        align-items: center;
         padding: 12px;
-        border: 1px solid #ead8c6;
-        border-radius: 16px;
+        border: 1px solid #ead7c5;
+        border-radius: 18px;
         background: #fffdf9;
       }
-      .list-name { font-weight: 900; }
-      .list-sub {
-        margin-top: 4px;
-        font-size: 13px;
-        color: #8c6d50;
+      .list-name {
+        font-weight: 700;
+        color: #6c4427;
       }
-      .notification-row.unread {
-        background: #fff8ec;
-        border-color: #dec39d;
+      .list-sub {
+        font-size: 13px;
+        color: #866650;
+        margin-top: 4px;
+      }
+      .row-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .divider {
+        height: 1px;
+        background: linear-gradient(to right, transparent, #e3cfbc, transparent);
+        margin: 16px 0;
+      }
+      .empty-box {
+        padding: 16px;
+        border: 1px dashed #d7c4b1;
+        border-radius: 18px;
+        color: #866650;
+        background: #fffaf5;
+      }
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #6c4427;
       }
       .stats-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(4, 1fr);
         gap: 12px;
-        margin-top: 14px;
         margin-bottom: 14px;
       }
       .stat-card {
-        border: 1px solid #ead8c7;
         background: #fffdf9;
-        border-radius: 20px;
+        border: 1px solid #ead7c5;
+        border-radius: 18px;
         padding: 16px;
       }
       .stat-label {
-        color: #8b6a4d;
+        color: #866650;
         font-size: 13px;
+        margin-bottom: 8px;
       }
       .stat-value {
-        margin-top: 8px;
         font-size: 22px;
-        font-weight: 900;
-        color: #72441e;
+        font-weight: 800;
+        color: #6c4427;
+      }
+      .notification-row.unread {
+        border-color: #c38a53;
+        background: #fff7ef;
       }
       .mobile-bottom-nav {
-        position: fixed;
-        left: 10px;
-        right: 10px;
-        bottom: 10px;
+        position: sticky;
+        bottom: 0;
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: 8px;
-        background: rgba(66,41,23,0.95);
-        padding: 8px;
-        border-radius: 22px;
-        box-shadow: 0 18px 34px rgba(0,0,0,0.2);
+        background: rgba(247,242,234,0.94);
+        backdrop-filter: blur(10px);
+        padding-top: 10px;
+        margin-top: 12px;
       }
       .mbtn {
-        border: 0;
+        border: none;
         border-radius: 16px;
-        min-height: 52px;
-        background: transparent;
-        color: #f8ede2;
-        font-weight: 800;
-        cursor: pointer;
+        padding: 12px 10px;
+        background: #ead7c4;
+        color: #6c4427;
+        font-weight: 700;
       }
       .mbtn.active {
-        background: #fff3e5;
-        color: #6e4322;
+        background: linear-gradient(135deg, #8a5a34, #6b4022);
+        color: white;
       }
       .mobile-more-list {
         display: flex;
@@ -2245,84 +2164,50 @@ function StyleTag() {
         gap: 10px;
       }
       .mobile-more-btn {
-        width: 100%;
-        min-height: 52px;
-        border: 0;
+        border: none;
         border-radius: 16px;
-        background: #ead9c8;
-        color: #66401e;
-        font-weight: 800;
-      }
-      .check-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        color: #6e4a2a;
-      }
-      .divider {
-        height: 1px;
-        background: #ead8c7;
-        margin: 16px 0;
+        padding: 14px;
+        text-align: left;
+        background: #fffaf6;
+        border: 1px solid #ead7c4;
+        color: #6c4427;
+        font-weight: 700;
       }
       .floating-home-btn {
         position: fixed;
-        right: 14px;
-        bottom: 86px;
-        z-index: 60;
-        border: 0;
+        right: 16px;
+        bottom: 82px;
+        border: none;
         border-radius: 999px;
         padding: 14px 18px;
-        background: linear-gradient(180deg, #8d5a2c 0%, #734620 100%);
-        color: #fff;
+        background: linear-gradient(135deg, #8a5a34, #6b4022);
+        color: white;
         font-weight: 800;
-        box-shadow: 0 12px 30px rgba(0,0,0,0.18);
-        cursor: pointer;
+        box-shadow: 0 14px 30px rgba(65,38,18,0.24);
       }
-
-      @media (max-width: 1024px) {
-        .sales-layout.desktop-layout {
-          grid-template-columns: 1fr 1fr;
-        }
-        .sales-layout.desktop-layout .right {
-          grid-column: 1 / -1;
-        }
-        .admin-grid {
+      @media (max-width: 1100px) {
+        .sales-layout.desktop-layout,
+        .admin-grid,
+        .stats-grid {
           grid-template-columns: 1fr;
         }
-        .stats-grid {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
       }
-
-      @media (max-width: 767px) {
-        .app-shell { padding: 10px; }
-        .topbar {
-          align-items: flex-start;
-          flex-direction: column;
+      @media (max-width: 768px) {
+        .app-shell {
+          padding: 10px;
         }
-        .topbar-title { font-size: 20px; }
-        .main-tabs { display: none; }
+        .topbar {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .topbar-actions {
+          justify-content: flex-start;
+        }
         .stack-mobile {
           flex-direction: column;
           align-items: stretch;
         }
-        .table-grid,
-        .menu-grid {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-        .order-row {
-          grid-template-columns: 1fr;
-          gap: 8px;
-        }
-        .sticky-actions {
-          position: sticky;
-          bottom: 76px;
-          background: rgba(255,248,239,0.98);
-          padding-top: 8px;
-        }
-        .stats-grid {
-          grid-template-columns: 1fr;
-        }
+        .order-row,
         .list-row {
           flex-direction: column;
           align-items: stretch;
