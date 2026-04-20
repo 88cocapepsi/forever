@@ -1,5 +1,6 @@
 import express from 'express';
 import tableRouter from './tableRoutes.js';
+import authRouter from './authRoutes.js';
 
 const router = express.Router();
 
@@ -11,5 +12,6 @@ router.get('/', (req, res) => {
 });
 
 router.use('/tables', tableRouter);
+router.use('/auth', authRouter);
 
 export default router;
