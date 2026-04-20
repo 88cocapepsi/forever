@@ -21,8 +21,28 @@ async function ensureDefaultAdmin() {
 
     admin.setPassword('123456');
     await admin.save();
+
     console.log('✅ Default admin created: admin / 123456');
   }
+}
+
+function sanitizeUser(user) {
+  if (!user) return null;
+
+  if (typeof user.toSafeJSON === 'function') {
+    return user.toSafeJSON();
+  }
+
+  return {
+    id: user._id?.toString?.() || String(user._id || ''),
+    _id: user._id?.toString?.() || String(user._id || ''),
+    name: user.name || '',
+    username: user.username || '',
+    role: user.role || 'staff',
+    isActive: user.isActive !== false,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
 }
 
 // LOGIN
@@ -44,16 +64,19 @@ authRouter.post('/login', async (req, res) => {
 
     const user = await User.findOne({ username });
 
-    if (!user || !user.isActive) {
+    if (!user || user.isActive === false) {
       return res.status(401).json({
         success: false,
         message: 'Sai tài khoản hoặc mật khẩu',
       });
     }
 
-    const ok = user.verifyPassword(password);
+    const validPassword =
+      typeof user.verifyPassword === 'function'
+        ? user.verifyPassword(password)
+        : false;
 
-    if (!ok) {
+    if (!validPassword) {
       return res.status(401).json({
         success: false,
         message: 'Sai tài khoản hoặc mật khẩu',
@@ -63,7 +86,7 @@ authRouter.post('/login', async (req, res) => {
     return res.json({
       success: true,
       token: createToken(),
-      user: user.toSafeJSON(),
+      user: sanitizeUser(user),
     });
   } catch (error) {
     console.error('POST /api/auth/login error:', error);
@@ -75,14 +98,14 @@ authRouter.post('/login', async (req, res) => {
   }
 });
 
-// GET USERS
+// GET ALL USERS
 authRouter.get('/users', async (req, res) => {
   try {
     await ensureDefaultAdmin();
 
     const users = await User.find().sort({ createdAt: -1 });
 
-    return res.json(users.map((user) => user.toSafeJSON()));
+    return res.json(users.map((user) => sanitizeUser(user)));
   } catch (error) {
     console.error('GET /api/auth/users error:', error);
     return res.status(500).json({
@@ -103,7 +126,9 @@ authRouter.post('/users', async (req, res) => {
       .trim()
       .toLowerCase();
     const password = String(req.body?.password || '').trim();
-    const role = String(req.body?.role || 'staff').trim().toLowerCase();
+    const role = String(req.body?.role || 'staff')
+      .trim()
+      .toLowerCase();
 
     if (!name || !username || !password) {
       return res.status(400).json({
@@ -135,13 +160,20 @@ authRouter.post('/users', async (req, res) => {
       isActive: true,
     });
 
+    if (typeof user.setPassword !== 'function') {
+      return res.status(500).json({
+        success: false,
+        message: 'User model chưa có setPassword()',
+      });
+    }
+
     user.setPassword(password);
     await user.save();
 
     return res.status(201).json({
       success: true,
       message: 'Tạo tài khoản thành công',
-      user: user.toSafeJSON(),
+      user: sanitizeUser(user),
     });
   } catch (error) {
     console.error('POST /api/auth/users error:', error);
