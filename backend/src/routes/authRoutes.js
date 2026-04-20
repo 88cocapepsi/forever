@@ -8,24 +8,6 @@ function createToken() {
   return crypto.randomBytes(24).toString('hex');
 }
 
-async function ensureDefaultAdmin() {
-  const adminExists = await User.findOne({ username: 'admin' });
-
-  if (!adminExists) {
-    const admin = new User({
-      name: 'Admin',
-      username: 'admin',
-      role: 'admin',
-      isActive: true,
-    });
-
-    admin.setPassword('123456');
-    await admin.save();
-
-    console.log('✅ Default admin created: admin / 123456');
-  }
-}
-
 function sanitizeUser(user) {
   if (!user) return null;
 
@@ -45,14 +27,44 @@ function sanitizeUser(user) {
   };
 }
 
+async function ensureDefaultAdmin() {
+  let admin = await User.findOne({ username: 'admin' });
+
+  if (!admin) {
+    admin = new User({
+      name: 'Admin',
+      username: 'admin',
+      role: 'admin',
+      isActive: true,
+    });
+
+    admin.setPassword('123456');
+    await admin.save();
+
+    console.log('✅ Default admin created: admin / 123456');
+    return admin;
+  }
+
+  // Tự sửa admin cũ nếu thiếu passwordSalt/passwordHash
+  if (!admin.passwordSalt || !admin.passwordHash) {
+    admin.setPassword('123456');
+    admin.name = admin.name || 'Admin';
+    admin.role = admin.role || 'admin';
+    admin.isActive = admin.isActive !== false;
+    await admin.save();
+
+    console.log('✅ Default admin repaired: admin / 123456');
+  }
+
+  return admin;
+}
+
 // LOGIN
 authRouter.post('/login', async (req, res) => {
   try {
     await ensureDefaultAdmin();
 
-    const username = String(req.body?.username || '')
-      .trim()
-      .toLowerCase();
+    const username = String(req.body?.username || '').trim().toLowerCase();
     const password = String(req.body?.password || '').trim();
 
     if (!username || !password) {
@@ -69,6 +81,19 @@ authRouter.post('/login', async (req, res) => {
         success: false,
         message: 'Sai tài khoản hoặc mật khẩu',
       });
+    }
+
+    // Tự sửa user cũ nếu thiếu salt/hash
+    if (!user.passwordSalt || !user.passwordHash) {
+      if (user.username === 'admin') {
+        user.setPassword('123456');
+        await user.save();
+      } else {
+        return res.status(500).json({
+          success: false,
+          message: 'Tài khoản này đang thiếu dữ liệu bảo mật. Hãy tạo lại tài khoản.',
+        });
+      }
     }
 
     const validPassword =
@@ -122,13 +147,9 @@ authRouter.post('/users', async (req, res) => {
     await ensureDefaultAdmin();
 
     const name = String(req.body?.name || '').trim();
-    const username = String(req.body?.username || '')
-      .trim()
-      .toLowerCase();
+    const username = String(req.body?.username || '').trim().toLowerCase();
     const password = String(req.body?.password || '').trim();
-    const role = String(req.body?.role || 'staff')
-      .trim()
-      .toLowerCase();
+    const role = String(req.body?.role || 'staff').trim().toLowerCase();
 
     if (!name || !username || !password) {
       return res.status(400).json({
@@ -159,13 +180,6 @@ authRouter.post('/users', async (req, res) => {
       role,
       isActive: true,
     });
-
-    if (typeof user.setPassword !== 'function') {
-      return res.status(500).json({
-        success: false,
-        message: 'User model chưa có setPassword()',
-      });
-    }
 
     user.setPassword(password);
     await user.save();
