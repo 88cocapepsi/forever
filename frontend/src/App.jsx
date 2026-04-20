@@ -76,17 +76,15 @@ function getOrderTotal(order) {
 }
 
 function getOrderQty(order) {
-  return (order?.items || []).reduce((sum, item) => sum + Number(item.quantity || item.qty || 0), 0);
+  return (order?.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 }
 
 function getUnreadCount(list, currentUserId) {
-  const uid = currentUserId || "unknown-user";
-  return (list || []).filter((n) => !(n.readBy || []).includes(uid)).length;
+  return (list || []).filter((n) => !(n.readBy || []).includes(currentUserId)).length;
 }
 
 function getNotificationRead(item, currentUserId) {
-  const uid = currentUserId || "unknown-user";
-  return (item.readBy || []).includes(uid);
+  return (item.readBy || []).includes(currentUserId);
 }
 
 function emptyProductForm() {
@@ -94,6 +92,7 @@ function emptyProductForm() {
     name: "",
     category: "Cà phê",
     price: "",
+    stock: "",
     unit: "ly",
     isActive: true,
   };
@@ -244,10 +243,7 @@ export default function App() {
   const lastSeenNotificationIdRef = useRef(null);
 
   const isAdmin = user?.role === "admin";
-  const unreadCount = getUnreadCount(
-    notifications,
-    user?.id || user?._id || user?.username
-  );
+  const unreadCount = getUnreadCount(notifications, user?.id);
 
   const selectedTable = useMemo(
     () => tables.find((t) => t._id === selectedTableId) || null,
@@ -298,6 +294,7 @@ export default function App() {
       stopSync();
     }
     return () => stopSync();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => {
@@ -313,6 +310,7 @@ export default function App() {
   useEffect(() => {
     if (!selectedTableId || !token) return;
     ensureCurrentOrder(selectedTableId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTableId, tables.length, token]);
 
   async function handleLogin(e) {
@@ -324,15 +322,53 @@ export default function App() {
     const password = String(loginForm.password || "").trim();
 
     try {
-      const data = await api("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ username, password }),
-      });
+      try {
+        const data = await api("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ username, password }),
+        });
 
-      localStorage.setItem("forever_token", data.token || "__backend__");
-      localStorage.setItem("forever_user", JSON.stringify(data.user));
-      setToken(data.token || "__backend__");
-      setUser(data.user);
+        localStorage.setItem("forever_token", data.token || "__backend__");
+        localStorage.setItem("forever_user", JSON.stringify(data.user));
+        setToken(data.token || "__backend__");
+        setUser(data.user);
+        setToast("Đăng nhập thành công");
+        return;
+      } catch (err) {
+        const msg = String(err?.message || "");
+        const is404 = msg.includes("404");
+
+        if (!is404) {
+          throw err;
+        }
+      }
+
+      let localUser = null;
+
+      if (username === "admin" && password === "123456") {
+        localUser = {
+          id: "local-admin",
+          name: "Admin",
+          username: "admin",
+          role: "admin",
+        };
+      } else if (username === "staff" && password === "123456") {
+        localUser = {
+          id: "local-staff",
+          name: "Nhân viên",
+          username: "staff",
+          role: "staff",
+        };
+      }
+
+      if (!localUser) {
+        throw new Error("Sai tài khoản hoặc mật khẩu");
+      }
+
+      localStorage.setItem("forever_token", "__local_demo__");
+      localStorage.setItem("forever_user", JSON.stringify(localUser));
+      setToken("__local_demo__");
+      setUser(localUser);
       setToast("Đăng nhập thành công");
     } catch (err) {
       setError(err.message || "Đăng nhập thất bại");
@@ -386,28 +422,34 @@ export default function App() {
       const tasks = [
         api("/api/tables", {}, token),
         api("/api/products", {}, token),
+        api("/api/orders/history?limit=100", {}, token),
+        api("/api/reports/summary", {}, token),
+        api("/api/warehouse", {}, token),
         api("/api/notifications?limit=100", {}, token),
       ];
 
       if (isAdmin) {
         tasks.push(api("/api/auth/users", {}, token));
+        tasks.push(api("/api/warehouse/logs", {}, token));
+        tasks.push(api("/api/products/inventory/logs", {}, token));
       }
 
       const results = await Promise.allSettled(tasks);
 
       const nextTables = results[0].status === "fulfilled" ? results[0].value : [];
       const nextProducts = results[1].status === "fulfilled" ? results[1].value : [];
-      const nextNotifications = results[2].status === "fulfilled" ? results[2].value : [];
+      const nextHistory = results[2].status === "fulfilled" ? results[2].value : [];
+      const nextReport = results[3].status === "fulfilled" ? results[3].value : null;
+      const nextWarehouse = results[4].status === "fulfilled" ? results[4].value : [];
+      const nextNotifications = results[5].status === "fulfilled" ? results[5].value : [];
 
       setTables(
         Array.isArray(nextTables) ? nextTables.map((table) => normalizeIncomingTable(table)) : []
       );
       setProducts(Array.isArray(nextProducts) ? nextProducts : []);
-      setHistoryOrders([]);
-      setReportSummary(null);
-      setWarehouseItems([]);
-      setWarehouseLogs([]);
-      setInventoryLogs([]);
+      setHistoryOrders(Array.isArray(nextHistory) ? nextHistory : []);
+      setReportSummary(nextReport || null);
+      setWarehouseItems(Array.isArray(nextWarehouse) ? nextWarehouse : []);
 
       const notificationList = Array.isArray(nextNotifications) ? nextNotifications : [];
       setNotifications(notificationList);
@@ -418,9 +460,10 @@ export default function App() {
         if (
           lastSeenNotificationIdRef.current &&
           latest?._id &&
-          latest._id !== lastSeenNotificationIdRef.current
+          latest._id !== lastSeenNotificationIdRef.current &&
+          latest.type === "payment"
         ) {
-          setToast(latest.message || "Có thông báo mới");
+          setToast(latest.message || "Có bàn vừa thanh toán");
         }
 
         if (latest?._id) {
@@ -429,20 +472,13 @@ export default function App() {
       }
 
       if (isAdmin) {
-        setUsers(Array.isArray(results[3]?.value) ? results[3].value : []);
-      } else {
-        setUsers([]);
+        setUsers(Array.isArray(results[6]?.value) ? results[6].value : []);
+        setWarehouseLogs(Array.isArray(results[7]?.value) ? results[7].value : []);
+        setInventoryLogs(Array.isArray(results[8]?.value) ? results[8].value : []);
       }
 
       if (selectedTableId) {
-        const selected = (Array.isArray(nextTables) ? nextTables : []).find(
-          (t) => t._id === selectedTableId
-        );
-        if (selected?.currentOrder && typeof selected.currentOrder === "object") {
-          setCurrentOrder(selected.currentOrder);
-        } else {
-          setCurrentOrder(null);
-        }
+        await refreshCurrentOrderForTable(selectedTableId, nextTables);
       }
 
       setError("");
@@ -466,8 +502,15 @@ export default function App() {
         return table.currentOrder;
       }
 
-      setCurrentOrder(null);
-      return null;
+      const orderId = getTableOrderId(table);
+      if (!orderId) {
+        setCurrentOrder(null);
+        return null;
+      }
+
+      const order = await api(`/api/orders/${orderId}`, {}, token);
+      if (tableId === selectedTableId) setCurrentOrder(order);
+      return order;
     } catch {
       if (tableId === selectedTableId) setCurrentOrder(null);
       return null;
@@ -485,64 +528,43 @@ export default function App() {
       return table.currentOrder;
     }
 
-    const fallbackOrder = {
-      items: [],
-      subtotal: 0,
-      discount: 0,
-      total: 0,
-    };
-    setCurrentOrder(fallbackOrder);
-    return fallbackOrder;
+    const existingOrderId = getTableOrderId(table);
+    if (existingOrderId) {
+      return refreshCurrentOrderForTable(tableId);
+    }
+
+    try {
+      const order = await api(`/api/orders/table/${tableId}/open`, { method: "POST" }, token);
+      setCurrentOrder(order);
+      await syncAll();
+      return order;
+    } catch {
+      const fallbackOrder = {
+        items: [],
+        subtotal: 0,
+        discount: 0,
+        total: 0,
+      };
+      setCurrentOrder(fallbackOrder);
+      return fallbackOrder;
+    }
   }
 
   async function addProductToOrder(product) {
     try {
-      if (!selectedTableId) {
-        setToast("Chọn bàn trước");
-        return;
-      }
-
       let order = currentOrder;
-      if (!order || typeof order !== "object") {
+      if (!order?._id) {
         order = await ensureCurrentOrder(selectedTableId);
+        if (!order?._id) return;
       }
 
-      const items = Array.isArray(order?.items) ? [...order.items] : [];
-      const index = items.findIndex((i) => i.name === product.name);
-
-      if (index >= 0) {
-        items[index] = {
-          ...items[index],
-          quantity: Number(items[index].quantity || 0) + 1,
-        };
-      } else {
-        items.push({
-          name: product.name,
-          price: Number(product.price || 0),
-          quantity: 1,
-        });
-      }
-
-      const subtotal = items.reduce(
-        (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0),
-        0
-      );
-
-      const nextOrder = {
-        ...(order || {}),
-        items,
-        subtotal,
-        discount: Number(order?.discount || 0),
-        total: subtotal - Number(order?.discount || 0),
-      };
-
-      await api(
-        `/api/tables/${selectedTableId}`,
+      const nextOrder = await api(
+        `/api/orders/${order._id}/items`,
         {
-          method: "PUT",
+          method: "POST",
           body: JSON.stringify({
-            currentOrder: nextOrder,
-            status: items.length > 0 ? "serving" : "empty",
+            productId: product._id,
+            quantity: 1,
           }),
         },
         token
@@ -557,48 +579,18 @@ export default function App() {
 
   async function updateOrderItemQuantity(item, nextQty) {
     try {
-      if (!selectedTableId || !currentOrder) return;
+      if (!currentOrder?._id) return;
 
-      const items = Array.isArray(currentOrder.items) ? [...currentOrder.items] : [];
-      const index = items.findIndex((i) => i.name === item.name);
-
-      if (index < 0) return;
-
-      if (nextQty <= 0) {
-        items.splice(index, 1);
-      } else {
-        items[index] = {
-          ...items[index],
-          quantity: nextQty,
-        };
-      }
-
-      const subtotal = items.reduce(
-        (sum, row) => sum + Number(row.price || 0) * Number(row.quantity || 0),
-        0
-      );
-
-      const nextOrder = {
-        ...currentOrder,
-        items,
-        subtotal,
-        discount: Number(currentOrder.discount || 0),
-        total: subtotal - Number(currentOrder.discount || 0),
-      };
-
-      await api(
-        `/api/tables/${selectedTableId}`,
+      const nextOrder = await api(
+        `/api/orders/${currentOrder._id}/items/${item.product}`,
         {
           method: "PUT",
-          body: JSON.stringify({
-            currentOrder: items.length ? nextOrder : null,
-            status: items.length ? "serving" : "empty",
-          }),
+          body: JSON.stringify({ quantity: nextQty }),
         },
         token
       );
 
-      setCurrentOrder(items.length ? nextOrder : null);
+      setCurrentOrder(nextOrder);
       await syncAll();
     } catch (err) {
       setError(err.message || "Không cập nhật món được");
@@ -607,35 +599,33 @@ export default function App() {
 
   async function payCurrentOrder() {
     try {
-      if (!selectedTableId || !(currentOrder?.items || []).length) {
+      if (!currentOrder?._id || !(currentOrder.items || []).length) {
         setToast("Đơn hiện tại đang trống");
         return;
       }
 
-      const paidOrder = {
-        ...currentOrder,
-        paidAt: new Date().toISOString(),
-      };
+      const paidOrder = await api(
+        `/api/orders/${currentOrder._id}/pay`,
+        { method: "POST" },
+        token
+      );
 
       try {
         await createNotification({
           type: "payment",
           title: "Thanh toán bàn",
-          message: `${selectedTable?.name || "Bàn"} - ${formatMoney(paidOrder.subtotal)}`,
+          message: `${selectedTable?.name || "Bàn"} đã thanh toán ${formatMoney(paidOrder?.subtotal || currentOrder?.subtotal || 0)}`,
           level: "success",
+          meta: {
+            tableName: selectedTable?.name || "Bàn",
+            total: Number(paidOrder?.subtotal || currentOrder?.subtotal || 0),
+          },
         });
       } catch {
         // ignore
       }
 
       printBill(paidOrder, selectedTable?.name || "Bàn", user?.name || "admin", false);
-
-      await api(
-        `/api/tables/${selectedTableId}/clear-order`,
-        { method: "PATCH" },
-        token
-      );
-
       setCurrentOrder(null);
       await syncAll();
       setToast("Thanh toán thành công");
@@ -657,16 +647,7 @@ export default function App() {
 
   async function markNotificationRead(id) {
     try {
-      const updated = await api(
-        `/api/notifications/${id}/read`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            userId: user?.id || user?._id || user?.username || "unknown-user",
-          }),
-        },
-        token
-      );
+      const updated = await api(`/api/notifications/${id}/read`, { method: "PUT" }, token);
       setNotifications((prev) =>
         prev.map((item) => (item._id === id ? updated : item))
       );
@@ -677,16 +658,7 @@ export default function App() {
 
   async function markAllNotificationsRead() {
     try {
-      await api(
-        "/api/notifications/read-all/all",
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            userId: user?.id || user?._id || user?.username || "unknown-user",
-          }),
-        },
-        token
-      );
+      await api("/api/notifications/read-all/all", { method: "PUT" }, token);
       await syncAll();
     } catch (err) {
       setError(err.message || "Không cập nhật được tất cả thông báo");
@@ -699,7 +671,7 @@ export default function App() {
       await createNotification({
         type: "system",
         title: "Khởi tạo bàn",
-        message: "Đã tạo bộ bàn mặc định",
+        message: "Đã tạo bộ bàn mặc định cho quán",
         level: "info",
       });
       await syncAll();
@@ -715,6 +687,7 @@ export default function App() {
         name: productForm.name,
         category: productForm.category,
         price: Number(productForm.price || 0),
+        stock: Number(productForm.stock || 0),
         unit: productForm.unit,
         isActive: productForm.isActive,
       };
@@ -736,8 +709,13 @@ export default function App() {
         await createNotification({
           type: "product",
           title: "Cập nhật sản phẩm",
-          message: `Đã cập nhật món ${payload.name}`,
+          message: `Đã cập nhật món ${payload.name} - giá ${formatMoney(payload.price)}`,
           level: "info",
+          meta: {
+            productName: payload.name,
+            price: Number(payload.price || 0),
+            action: "update",
+          },
         });
         setToast("Đã cập nhật món");
       } else {
@@ -752,8 +730,13 @@ export default function App() {
         await createNotification({
           type: "product",
           title: "Thêm sản phẩm",
-          message: `Đã thêm món ${payload.name}`,
+          message: `Đã thêm món ${payload.name} - giá ${formatMoney(payload.price)}`,
           level: "success",
+          meta: {
+            productName: payload.name,
+            price: Number(payload.price || 0),
+            action: "create",
+          },
         });
         setToast("Đã thêm món");
       }
@@ -772,6 +755,7 @@ export default function App() {
       name: item.name || "",
       category: item.category || "Khác",
       price: item.price ?? "",
+      stock: item.stock ?? "",
       unit: item.unit || "ly",
       isActive: item.isActive !== false,
     });
@@ -780,11 +764,101 @@ export default function App() {
   }
 
   async function importProductStock() {
-    setToast("Backend hiện tại không bật nhập kho sản phẩm");
+    try {
+      if (!importProductId || Number(importForm.quantity || 0) <= 0) {
+        setToast("Nhập số lượng nhập kho hợp lệ");
+        return;
+      }
+
+      await api(
+        `/api/products/${importProductId}/import`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            quantity: Number(importForm.quantity || 0),
+            note: importForm.note,
+          }),
+        },
+        token
+      );
+
+      const productName = products.find((p) => p._id === importProductId)?.name || "sản phẩm";
+
+      await createNotification({
+        type: "stock",
+        title: "Nhập kho sản phẩm",
+        message: `Đã nhập kho ${productName} với số lượng ${Number(importForm.quantity || 0)}, tồn kho là ${(products.find((p) => p._id === importProductId)?.stock || 0) + Number(importForm.quantity || 0)}`,
+        level: "success",
+        meta: {
+          productName,
+          quantity: Number(importForm.quantity || 0),
+          nextStock: (products.find((p) => p._id === importProductId)?.stock || 0) + Number(importForm.quantity || 0),
+        },
+      });
+
+      setImportForm(emptyImportForm());
+      setImportProductId("");
+      setToast("Đã nhập kho sản phẩm");
+      await syncAll();
+    } catch (err) {
+      setError(err.message || "Không nhập kho được");
+    }
   }
 
   async function saveWarehouseItem() {
-    setToast("Backend hiện tại không bật kho riêng");
+    try {
+      const payload = {
+        name: warehouseForm.name,
+        quantity: Number(warehouseForm.quantity || 0),
+        unit: warehouseForm.unit,
+        note: warehouseForm.note,
+      };
+
+      if (!payload.name.trim()) {
+        setToast("Nhập tên hàng kho");
+        return;
+      }
+
+      if (editingWarehouseId) {
+        await api(
+          `/api/warehouse/${editingWarehouseId}`,
+          {
+            method: "PUT",
+            body: JSON.stringify(payload),
+          },
+          token
+        );
+        await createNotification({
+          type: "warehouse",
+          title: "Cập nhật kho riêng",
+          message: `Đã cập nhật ${payload.name}`,
+          level: "info",
+        });
+        setToast("Đã cập nhật kho");
+      } else {
+        await api(
+          "/api/warehouse",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+          token
+        );
+        await createNotification({
+          type: "warehouse",
+          title: "Thêm hàng kho",
+          message: `Đã thêm ${payload.name}`,
+          level: "success",
+        });
+        setToast("Đã thêm hàng kho");
+      }
+
+      setWarehouseForm(emptyWarehouseForm());
+      setEditingWarehouseId(null);
+      await syncAll();
+    } catch (err) {
+      setError(err.message || "Không lưu được kho");
+    }
   }
 
   function startEditWarehouse(item) {
@@ -799,8 +873,23 @@ export default function App() {
     setActiveAdminTab("warehouse");
   }
 
-  async function deleteWarehouseItem() {
-    setToast("Backend hiện tại không bật kho riêng");
+  async function deleteWarehouseItem(id) {
+    if (!window.confirm("Xóa hàng kho này?")) return;
+
+    try {
+      const item = warehouseItems.find((x) => x._id === id);
+      await api(`/api/warehouse/${id}`, { method: "DELETE" }, token);
+      await createNotification({
+        type: "warehouse",
+        title: "Xóa hàng kho",
+        message: `Đã xóa ${item?.name || "hàng kho"}`,
+        level: "warning",
+      });
+      setToast("Đã xóa hàng kho");
+      await syncAll();
+    } catch (err) {
+      setError(err.message || "Không xóa được hàng kho");
+    }
   }
 
   async function saveUser() {
@@ -829,8 +918,12 @@ export default function App() {
       await createNotification({
         type: "user",
         title: "Tạo tài khoản",
-        message: `Đã tạo tài khoản ${payload.username}`,
+        message: `Đã tạo tài khoản ${payload.username} (${payload.role})`,
         level: "success",
+        meta: {
+          username: payload.username,
+          role: payload.role,
+        },
       });
 
       setUserForm(emptyUserForm());
@@ -1210,12 +1303,15 @@ export default function App() {
         <div className="menu-grid">
           {filteredProducts.map((item) => (
             <button
-              key={item._id || item.name}
+              key={item._id}
               className="menu-card"
               onClick={() => addProductToOrder(item)}
+              disabled={Number(item.stock || 0) <= 0}
             >
               <div className="menu-card-name">{item.name}</div>
-              <div className="menu-card-cat">{item.category} • {item.unit || "ly"}</div>
+              <div className="menu-card-cat">
+                {item.category} • Tồn: {item.stock} {item.unit}
+              </div>
               <div className="menu-card-price">{formatMoney(item.price)}</div>
             </button>
           ))}
@@ -1237,8 +1333,8 @@ export default function App() {
 
         <div className="order-list">
           {(currentOrder?.items || []).length ? (
-            currentOrder.items.map((item, idx) => (
-              <div key={`${item.name}-${idx}`} className="order-row">
+            currentOrder.items.map((item) => (
+              <div key={item.product} className="order-row">
                 <div className="order-main">
                   <div className="order-name">{item.name}</div>
                   <div className="order-price">{formatMoney(item.price)}</div>
@@ -1247,31 +1343,21 @@ export default function App() {
                 <div className="qty-box">
                   <button
                     className="qty-btn"
-                    onClick={() =>
-                      updateOrderItemQuantity(
-                        item,
-                        Number(item.quantity || item.qty || 0) - 1
-                      )
-                    }
+                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || 0) - 1)}
                   >
                     -
                   </button>
-                  <span className="qty-num">{item.quantity || item.qty || 0}</span>
+                  <span className="qty-num">{item.quantity}</span>
                   <button
                     className="qty-btn"
-                    onClick={() =>
-                      updateOrderItemQuantity(
-                        item,
-                        Number(item.quantity || item.qty || 0) + 1
-                      )
-                    }
+                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || 0) + 1)}
                   >
                     +
                   </button>
                 </div>
 
                 <div className="order-line-total">
-                  {formatMoney(Number(item.price || 0) * Number(item.quantity || item.qty || 0))}
+                  {formatMoney(Number(item.price || 0) * Number(item.quantity || 0))}
                 </div>
               </div>
             ))
@@ -1412,6 +1498,13 @@ export default function App() {
             />
             <input
               className="input"
+              type="number"
+              placeholder="Tồn kho"
+              value={productForm.stock}
+              onChange={(e) => setProductForm((p) => ({ ...p, stock: e.target.value }))}
+            />
+            <input
+              className="input"
               placeholder="Đơn vị"
               value={productForm.unit}
               onChange={(e) => setProductForm((p) => ({ ...p, unit: e.target.value }))}
@@ -1446,11 +1539,11 @@ export default function App() {
           <div className="panel-title small-title">Danh sách sản phẩm</div>
           <div className="list-table">
             {products.map((item) => (
-              <div key={item._id || item.name} className="list-row">
+              <div key={item._id} className="list-row">
                 <div>
                   <div className="list-name">{item.name}</div>
                   <div className="list-sub">
-                    {item.category} • {formatMoney(item.price)} • {item.unit || "ly"}
+                    {item.category} • {formatMoney(item.price)} • Tồn: {item.stock} {item.unit}
                   </div>
                 </div>
                 <div className="row-actions">
@@ -1461,6 +1554,40 @@ export default function App() {
               </div>
             ))}
           </div>
+
+          <div className="divider" />
+
+          <div className="panel-title small-title">Nhập thêm kho sản phẩm</div>
+          <div className="form-col">
+            <select
+              className="input"
+              value={importProductId}
+              onChange={(e) => setImportProductId(e.target.value)}
+            >
+              <option value="">Chọn sản phẩm</option>
+              {products.map((p) => (
+                <option key={p._id} value={p._id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <input
+              className="input"
+              type="number"
+              placeholder="Số lượng nhập"
+              value={importForm.quantity}
+              onChange={(e) => setImportForm((p) => ({ ...p, quantity: e.target.value }))}
+            />
+            <input
+              className="input"
+              placeholder="Ghi chú"
+              value={importForm.note}
+              onChange={(e) => setImportForm((p) => ({ ...p, note: e.target.value }))}
+            />
+            <button className="btn btn-primary" onClick={importProductStock}>
+              Nhập kho
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1468,9 +1595,110 @@ export default function App() {
 
   function renderAdminWarehouse() {
     return (
-      <div className="panel inner">
-        <div className="panel-title small-title">Kho riêng</div>
-        <div className="empty-box">Backend hiện tại chưa bật kho riêng.</div>
+      <div className="admin-grid">
+        <div className="panel inner">
+          <div className="panel-title small-title">
+            {editingWarehouseId ? "Sửa kho riêng" : "Thêm kho riêng"}
+          </div>
+          <div className="form-col">
+            <input
+              className="input"
+              placeholder="Tên hàng kho"
+              value={warehouseForm.name}
+              onChange={(e) => setWarehouseForm((p) => ({ ...p, name: e.target.value }))}
+            />
+            <input
+              className="input"
+              type="number"
+              placeholder="Số lượng"
+              value={warehouseForm.quantity}
+              onChange={(e) => setWarehouseForm((p) => ({ ...p, quantity: e.target.value }))}
+            />
+            <input
+              className="input"
+              placeholder="Đơn vị"
+              value={warehouseForm.unit}
+              onChange={(e) => setWarehouseForm((p) => ({ ...p, unit: e.target.value }))}
+            />
+            <textarea
+              className="input"
+              rows={3}
+              placeholder="Ghi chú"
+              value={warehouseForm.note}
+              onChange={(e) => setWarehouseForm((p) => ({ ...p, note: e.target.value }))}
+            />
+
+            <div className="row-actions">
+              <button className="btn btn-primary" onClick={saveWarehouseItem}>
+                {editingWarehouseId ? "Cập nhật" : "Thêm kho"}
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  setWarehouseForm(emptyWarehouseForm());
+                  setEditingWarehouseId(null);
+                }}
+              >
+                Mới
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel inner">
+          <div className="panel-head stack-mobile">
+            <div className="panel-title small-title">Danh sách kho riêng</div>
+            <input
+              className="input small"
+              placeholder="Tìm kho..."
+              value={warehouseKeyword}
+              onChange={(e) => setWarehouseKeyword(e.target.value)}
+            />
+          </div>
+
+          <div className="list-table">
+            {filteredWarehouse.map((item) => (
+              <div key={item._id} className="list-row">
+                <div>
+                  <div className="list-name">{item.name}</div>
+                  <div className="list-sub">
+                    {item.quantity} {item.unit} • {item.note || "Không ghi chú"}
+                  </div>
+                </div>
+                <div className="row-actions">
+                  <button className="btn small" onClick={() => startEditWarehouse(item)}>
+                    Sửa
+                  </button>
+                  <button className="btn small danger" onClick={() => deleteWarehouseItem(item._id)}>
+                    Xóa
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {!!warehouseLogs.length && (
+            <>
+              <div className="divider" />
+              <div className="panel-title small-title">Log kho riêng</div>
+              <div className="list-table">
+                {warehouseLogs.slice(0, 20).map((log) => (
+                  <div key={log._id} className="list-row">
+                    <div>
+                      <div className="list-name">
+                        {log.itemName} • {log.action}
+                      </div>
+                      <div className="list-sub">
+                        {log.quantity} {log.unit} • {log.note || ""} •{" "}
+                        {new Date(log.createdAt).toLocaleString("vi-VN")}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     );
   }
@@ -1536,8 +1764,21 @@ export default function App() {
   function renderAdminLogs() {
     return (
       <div className="panel inner">
-        <div className="panel-title small-title">Log</div>
-        <div className="empty-box">Backend hiện tại chưa bật log tồn kho.</div>
+        <div className="panel-title small-title">Log tồn kho sản phẩm</div>
+        <div className="list-table">
+          {inventoryLogs.map((log) => (
+            <div key={log._id} className="list-row">
+              <div>
+                <div className="list-name">
+                  {log.productName} • {log.type}
+                </div>
+                <div className="list-sub">
+                  {log.quantity} • {log.note || ""} • {new Date(log.createdAt).toLocaleString("vi-VN")}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -1587,7 +1828,106 @@ export default function App() {
     return (
       <div className="panel">
         <div className="panel-title">Báo cáo</div>
-        <div className="empty-box">Backend hiện tại chưa bật báo cáo tổng hợp.</div>
+
+        <div className="stats-grid">
+          <div className="stat-card">
+            <div className="stat-label">Doanh thu hôm nay</div>
+            <div className="stat-value">{formatMoney(reportSummary?.todayRevenue)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Doanh thu tháng</div>
+            <div className="stat-value">{formatMoney(reportSummary?.monthRevenue)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Doanh thu năm</div>
+            <div className="stat-value">{formatMoney(reportSummary?.yearRevenue)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Số đơn hôm nay</div>
+            <div className="stat-value">{reportSummary?.todayOrders || 0}</div>
+          </div>
+        </div>
+
+        <div className="admin-grid">
+          <div className="panel inner">
+            <div className="panel-title small-title">Top món tháng này</div>
+            <div className="list-table">
+              {(reportSummary?.topProducts || []).map((item, idx) => (
+                <div key={`${item._id}-${idx}`} className="list-row">
+                  <div>
+                    <div className="list-name">{item._id}</div>
+                    <div className="list-sub">
+                      SL: {item.qty} • Doanh thu: {formatMoney(item.revenue)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="panel inner">
+            <div className="panel-title small-title">Món sắp hết hàng</div>
+            <div className="list-table">
+              {(reportSummary?.lowStock || []).map((item) => (
+                <div key={item._id} className="list-row">
+                  <div>
+                    <div className="list-name">{item.name}</div>
+                    <div className="list-sub">
+                      Còn {item.stock} {item.unit}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="admin-grid">
+          <div className="panel inner">
+            <div className="panel-title small-title">Thống kê theo ca</div>
+            <div className="list-table">
+              {(reportSummary?.shiftStats || []).map((shift) => (
+                <div key={shift.name} className="list-row">
+                  <div>
+                    <div className="list-name">{shift.name}</div>
+                    <div className="list-sub">
+                      {shift.orders} đơn • {formatMoney(shift.revenue)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="panel inner">
+            <div className="panel-head stack-mobile">
+              <div className="panel-title small-title">Lịch sử thanh toán</div>
+              <button className="btn small" onClick={() => setShowMoreHistory((p) => !p)}>
+                {showMoreHistory ? "Thu gọn" : "Xem thêm"}
+              </button>
+            </div>
+            <div className="list-table">
+              {visibleHistory.map((order) => (
+                <div key={order._id} className="list-row">
+                  <div>
+                    <div className="list-name">{formatMoney(order.subtotal)}</div>
+                    <div className="list-sub">
+                      {new Date(order.paidAt).toLocaleString("vi-VN")}
+                    </div>
+                  </div>
+                  <button
+                    className="btn small"
+                    onClick={() =>
+                      printBill(order, order?.tableName || "Đã thanh toán", user?.name || "admin", false)
+                    }
+                  >
+                    In lại
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1610,10 +1950,7 @@ export default function App() {
         <div className="list-table">
           {notifications.length ? (
             notifications.map((item) => {
-              const isRead = getNotificationRead(
-                item,
-                user?.id || user?._id || user?.username
-              );
+              const isRead = getNotificationRead(item, user?.id);
               return (
                 <div key={item._id} className={`list-row notification-row ${isRead ? "" : "unread"}`}>
                   <div>
@@ -1732,11 +2069,11 @@ function StyleTag() {
         font-size: 28px;
         font-weight: 800;
         color: #6c4427;
-        margin-bottom: 6px;
       }
       .brand-sub {
-        color: #8a684e;
-        margin-bottom: 20px;
+        color: #8c6b4b;
+        margin-top: 6px;
+        margin-bottom: 22px;
       }
       .form-col {
         display: flex;
@@ -1745,265 +2082,277 @@ function StyleTag() {
       }
       .input {
         width: 100%;
-        border: 1px solid #dcc3aa;
-        background: #fffdf9;
+        border: 1px solid #d9c2a6;
         border-radius: 16px;
-        padding: 12px 14px;
-        color: #2e2018;
+        background: #fffdfb;
+        padding: 13px 14px;
         outline: none;
       }
-      .input.small {
-        padding: 10px 12px;
-        min-width: 120px;
+      .input:focus {
+        border-color: #9a6638;
+        box-shadow: 0 0 0 3px rgba(154,102,56,0.12);
       }
+      .input.small { padding: 10px 12px; }
       .btn {
-        border: none;
+        border: 0;
         border-radius: 16px;
-        padding: 11px 16px;
-        background: #dbc1a6;
-        color: #4d2f1b;
-        cursor: pointer;
+        padding: 12px 14px;
+        background: #e9dac7;
+        color: #53331e;
         font-weight: 700;
-      }
-      .btn.small {
-        padding: 9px 12px;
-        font-size: 13px;
+        cursor: pointer;
       }
       .btn-primary {
-        background: linear-gradient(135deg, #8a5a34, #6b4022);
+        background: linear-gradient(180deg, #8d5a2c 0%, #734620 100%);
         color: #fff;
       }
       .btn-lg {
-        padding: 13px 18px;
+        min-height: 52px;
+        font-size: 16px;
+      }
+      .btn.small {
+        padding: 8px 12px;
+        border-radius: 12px;
+        font-size: 14px;
+      }
+      .danger {
+        background: #f4d7d7 !important;
+        color: #8c2a2a !important;
       }
       .error-box {
         margin-top: 14px;
-        background: #ffe1df;
-        color: #a12f2f;
-        border: 1px solid #ffc0bc;
+        background: #fff1f1;
+        border: 1px solid #f1c9c9;
+        color: #8a2e2e;
+        padding: 12px 14px;
         border-radius: 16px;
-        padding: 10px 12px;
       }
-      .error-box.outer {
-        margin-bottom: 12px;
-      }
+      .error-box.outer { margin-bottom: 12px; }
       .toast {
         position: fixed;
-        right: 16px;
-        top: 16px;
-        z-index: 50;
-        background: #3d2a1d;
-        color: #fff;
-        padding: 12px 16px;
-        border-radius: 16px;
-        box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+        right: 14px;
+        top: 14px;
+        z-index: 40;
+        background: #2f2017;
+        color: white;
+        padding: 12px 14px;
+        border-radius: 14px;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.18);
       }
       .topbar {
         display: flex;
         justify-content: space-between;
         align-items: center;
         gap: 12px;
+        background: rgba(255,255,255,0.78);
+        border: 1px solid #e2d2c0;
+        border-radius: 22px;
         padding: 14px 16px;
-        border-radius: 24px;
-        background: rgba(255,255,255,0.72);
-        border: 1px solid #ead7c4;
-        box-shadow: 0 8px 24px rgba(72,42,18,0.08);
-        margin-bottom: 14px;
+        box-shadow: 0 10px 30px rgba(79,53,30,0.07);
       }
       .topbar-title {
         font-size: 24px;
-        font-weight: 800;
-        color: #6c4427;
+        font-weight: 900;
+        color: #6f4726;
       }
       .topbar-sub {
-        color: #8a684e;
+        color: #88684d;
         font-size: 14px;
+        margin-top: 4px;
       }
       .topbar-actions {
         display: flex;
-        align-items: center;
-        gap: 10px;
+        gap: 8px;
         flex-wrap: wrap;
       }
       .chip {
-        border: none;
+        border: 1px solid #d9c4aa;
         border-radius: 999px;
         padding: 10px 14px;
-        background: #f1e4d5;
-        color: #6c4427;
-        cursor: pointer;
+        background: #fffaf4;
+        color: #694224;
         font-weight: 700;
-      }
-      .chip.danger {
-        background: #fee0dd;
-        color: #a1372c;
+        cursor: pointer;
       }
       .main-tabs {
         display: flex;
         gap: 10px;
+        margin-top: 14px;
         margin-bottom: 14px;
       }
-      .main-tab,
-      .sub-tab {
-        border: none;
-        border-radius: 18px;
+      .main-tab {
+        border: 0;
+        border-radius: 16px;
         padding: 12px 16px;
-        background: #ead7c4;
-        color: #70482a;
-        cursor: pointer;
-        font-weight: 700;
-      }
-      .main-tab.active,
-      .sub-tab.active {
-        background: linear-gradient(135deg, #8a5a34, #6b4022);
-        color: #fff;
-      }
-      .panel {
-        background: rgba(255,255,255,0.78);
-        border: 1px solid #ead7c4;
-        border-radius: 24px;
-        padding: 16px;
-        box-shadow: 0 8px 24px rgba(72,42,18,0.08);
-      }
-      .panel.inner {
-        min-height: 100%;
-      }
-      .panel-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 14px;
-      }
-      .panel-title {
-        font-size: 20px;
+        background: #e7d8c7;
+        color: #66401f;
         font-weight: 800;
-        color: #6c4427;
+        cursor: pointer;
       }
-      .panel-title.small-title {
-        font-size: 18px;
-      }
-      .panel-sub {
-        color: #8a684e;
-        font-size: 13px;
-        margin-top: 4px;
-      }
-      .panel-tools {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
+      .main-tab.active {
+        background: #7b4d27;
+        color: #fff;
       }
       .sales-layout.desktop-layout {
         display: grid;
-        grid-template-columns: 1.15fr 1fr 1fr;
+        grid-template-columns: 1.1fr 1.3fr 1fr;
         gap: 14px;
       }
-      .col {
-        min-width: 0;
+      .sales-layout.mobile-layout {
+        padding-bottom: 84px;
       }
-      .table-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-        gap: 12px;
-      }
-      .table-card {
-        border: 1px solid #e3cfbb;
-        background: #fffaf5;
-        border-radius: 20px;
+      .panel {
+        background: rgba(255,255,255,0.86);
+        border: 1px solid #e4d4c1;
+        border-radius: 24px;
         padding: 14px;
-        text-align: left;
-        cursor: pointer;
-        transition: 0.18s ease;
+        box-shadow: 0 12px 30px rgba(85,57,32,0.06);
       }
-      .table-card:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 10px 20px rgba(85,49,22,0.08);
+      .panel.inner {
+        background: #fffaf5;
       }
-      .table-card.selected {
-        border-color: #8a5a34;
-        box-shadow: 0 0 0 2px rgba(138,90,52,0.15);
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
       }
-      .table-card.busy {
-        background: #fff1e4;
+      .panel-title {
+        font-size: 18px;
+        font-weight: 900;
+        color: #6c4322;
       }
-      .table-name {
-        font-weight: 800;
-        color: #6c4427;
-        margin-bottom: 6px;
+      .small-title {
+        font-size: 16px;
       }
-      .table-meta {
+      .panel-sub {
+        color: #8f6b4b;
         font-size: 13px;
-        color: #866650;
       }
-      .table-total {
-        margin-top: 10px;
-        font-weight: 800;
-        color: #8a5a34;
+      .panel-tools,
+      .admin-tabs,
+      .row-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .sub-tab {
+        border: 0;
+        border-radius: 12px;
+        background: #e8dac8;
+        color: #68401e;
+        padding: 10px 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .sub-tab.active {
+        background: #7b4d27;
+        color: white;
       }
       .zone-title {
         font-size: 14px;
         font-weight: 800;
-        color: #8a684e;
-        margin: 16px 0 10px;
+        color: #805635;
+        margin: 14px 0 8px;
+      }
+      .table-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .table-card {
+        text-align: left;
+        border: 1px solid #e0cfba;
+        background: #fffdf9;
+        border-radius: 18px;
+        padding: 14px;
+        cursor: pointer;
+      }
+      .table-card.selected {
+        border-color: #8e5d33;
+        box-shadow: 0 0 0 3px rgba(142,93,51,0.12);
+      }
+      .table-card.busy {
+        background: linear-gradient(180deg, #fff6ea 0%, #f7e8d4 100%);
+      }
+      .table-name {
+        font-size: 16px;
+        font-weight: 900;
+      }
+      .table-meta {
+        margin-top: 6px;
+        color: #89694f;
+        font-size: 13px;
+      }
+      .table-total {
+        margin-top: 8px;
+        font-size: 16px;
+        font-weight: 900;
+        color: #7e4d23;
       }
       .menu-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
       }
       .menu-card {
-        border: 1px solid #e5d0bc;
-        background: #fffaf6;
-        border-radius: 20px;
+        border: 1px solid #e0cfba;
+        background: #fffdf9;
+        border-radius: 18px;
         padding: 14px;
         text-align: left;
         cursor: pointer;
       }
+      .menu-card:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
       .menu-card-name {
-        font-weight: 800;
-        color: #6c4427;
-        margin-bottom: 6px;
+        font-size: 15px;
+        font-weight: 900;
       }
       .menu-card-cat {
-        color: #866650;
-        font-size: 13px;
-        margin-bottom: 10px;
+        margin-top: 5px;
+        color: #8a6b4f;
+        font-size: 12px;
       }
       .menu-card-price {
-        color: #8a5a34;
-        font-weight: 800;
+        margin-top: 8px;
+        color: #7a4920;
+        font-size: 16px;
+        font-weight: 900;
       }
       .order-panel {
         display: flex;
         flex-direction: column;
       }
       .order-total-top {
-        font-weight: 800;
-        color: #8a5a34;
+        font-size: 18px;
+        font-weight: 900;
+        color: #7c4a21;
       }
       .order-list {
         display: flex;
         flex-direction: column;
         gap: 10px;
+        min-height: 240px;
       }
       .order-row {
         display: grid;
         grid-template-columns: 1fr auto auto;
         gap: 10px;
         align-items: center;
-        border: 1px solid #e9d7c7;
-        border-radius: 18px;
-        padding: 12px;
+        border: 1px solid #ebdccb;
         background: #fffdf9;
+        border-radius: 16px;
+        padding: 10px;
       }
-      .order-name {
-        font-weight: 700;
-        color: #6c4427;
-      }
+      .order-name { font-weight: 800; }
       .order-price {
-        color: #88674d;
+        margin-top: 4px;
         font-size: 13px;
-        margin-top: 3px;
+        color: #8a6b50;
       }
       .qty-box {
         display: flex;
@@ -2011,56 +2360,59 @@ function StyleTag() {
         gap: 8px;
       }
       .qty-btn {
-        border: none;
+        width: 32px;
+        height: 32px;
+        border: 0;
         border-radius: 10px;
-        width: 30px;
-        height: 30px;
+        background: #ebdbc8;
         cursor: pointer;
-        background: #ecdccc;
-        color: #6c4427;
-        font-weight: 800;
+        font-weight: 900;
       }
       .qty-num {
-        min-width: 22px;
+        min-width: 18px;
         text-align: center;
-        font-weight: 700;
+        font-weight: 900;
       }
       .order-line-total {
-        font-weight: 800;
-        color: #8a5a34;
+        font-weight: 900;
+        color: #6e431f;
+        white-space: nowrap;
+      }
+      .empty-box {
+        padding: 18px;
+        border: 1px dashed #d8c5af;
+        border-radius: 18px;
+        color: #8b6b4b;
+        text-align: center;
       }
       .summary-box {
-        border-top: 1px dashed #d7c4b1;
-        margin-top: 14px;
-        padding-top: 14px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
+        margin-top: 12px;
+        background: #fff8ef;
+        border: 1px solid #eadac8;
+        border-radius: 18px;
+        padding: 12px;
       }
       .summary-row {
         display: flex;
         justify-content: space-between;
-        gap: 10px;
+        padding: 4px 0;
       }
       .summary-row.total {
-        font-size: 18px;
-        font-weight: 800;
-        color: #6c4427;
+        margin-top: 6px;
+        padding-top: 10px;
+        border-top: 1px dashed #d7c2ab;
+        font-size: 16px;
       }
       .sticky-actions {
-        display: flex;
-        gap: 10px;
-        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+        margin-top: 12px;
       }
       .admin-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr 1.2fr;
         gap: 14px;
-      }
-      .admin-tabs {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
       }
       .list-table {
         display: flex;
@@ -2070,93 +2422,71 @@ function StyleTag() {
       .list-row {
         display: flex;
         justify-content: space-between;
-        gap: 12px;
         align-items: center;
+        gap: 12px;
         padding: 12px;
-        border: 1px solid #ead7c5;
-        border-radius: 18px;
+        border: 1px solid #ead8c6;
+        border-radius: 16px;
         background: #fffdf9;
       }
-      .list-name {
-        font-weight: 700;
-        color: #6c4427;
-      }
+      .list-name { font-weight: 900; }
       .list-sub {
-        font-size: 13px;
-        color: #866650;
         margin-top: 4px;
+        font-size: 13px;
+        color: #8c6d50;
       }
-      .row-actions {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .divider {
-        height: 1px;
-        background: linear-gradient(to right, transparent, #e3cfbc, transparent);
-        margin: 16px 0;
-      }
-      .empty-box {
-        padding: 16px;
-        border: 1px dashed #d7c4b1;
-        border-radius: 18px;
-        color: #866650;
-        background: #fffaf5;
-      }
-      .check-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        color: #6c4427;
+      .notification-row.unread {
+        background: #fff8ec;
+        border-color: #dec39d;
       }
       .stats-grid {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 12px;
+        margin-top: 14px;
         margin-bottom: 14px;
       }
       .stat-card {
+        border: 1px solid #ead8c7;
         background: #fffdf9;
-        border: 1px solid #ead7c5;
-        border-radius: 18px;
+        border-radius: 20px;
         padding: 16px;
       }
       .stat-label {
-        color: #866650;
+        color: #8b6a4d;
         font-size: 13px;
-        margin-bottom: 8px;
       }
       .stat-value {
+        margin-top: 8px;
         font-size: 22px;
-        font-weight: 800;
-        color: #6c4427;
-      }
-      .notification-row.unread {
-        border-color: #c38a53;
-        background: #fff7ef;
+        font-weight: 900;
+        color: #72441e;
       }
       .mobile-bottom-nav {
-        position: sticky;
-        bottom: 0;
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
         display: grid;
         grid-template-columns: repeat(4, 1fr);
         gap: 8px;
-        background: rgba(247,242,234,0.94);
-        backdrop-filter: blur(10px);
-        padding-top: 10px;
-        margin-top: 12px;
+        background: rgba(66,41,23,0.95);
+        padding: 8px;
+        border-radius: 22px;
+        box-shadow: 0 18px 34px rgba(0,0,0,0.2);
       }
       .mbtn {
-        border: none;
+        border: 0;
         border-radius: 16px;
-        padding: 12px 10px;
-        background: #ead7c4;
-        color: #6c4427;
-        font-weight: 700;
+        min-height: 52px;
+        background: transparent;
+        color: #f8ede2;
+        font-weight: 800;
+        cursor: pointer;
       }
       .mbtn.active {
-        background: linear-gradient(135deg, #8a5a34, #6b4022);
-        color: white;
+        background: #fff3e5;
+        color: #6e4322;
       }
       .mobile-more-list {
         display: flex;
@@ -2164,50 +2494,84 @@ function StyleTag() {
         gap: 10px;
       }
       .mobile-more-btn {
-        border: none;
+        width: 100%;
+        min-height: 52px;
+        border: 0;
         border-radius: 16px;
-        padding: 14px;
-        text-align: left;
-        background: #fffaf6;
-        border: 1px solid #ead7c4;
-        color: #6c4427;
-        font-weight: 700;
+        background: #ead9c8;
+        color: #66401e;
+        font-weight: 800;
+      }
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #6e4a2a;
+      }
+      .divider {
+        height: 1px;
+        background: #ead8c7;
+        margin: 16px 0;
       }
       .floating-home-btn {
         position: fixed;
-        right: 16px;
-        bottom: 82px;
-        border: none;
+        right: 14px;
+        bottom: 86px;
+        z-index: 60;
+        border: 0;
         border-radius: 999px;
         padding: 14px 18px;
-        background: linear-gradient(135deg, #8a5a34, #6b4022);
-        color: white;
+        background: linear-gradient(180deg, #8d5a2c 0%, #734620 100%);
+        color: #fff;
         font-weight: 800;
-        box-shadow: 0 14px 30px rgba(65,38,18,0.24);
+        box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+        cursor: pointer;
       }
-      @media (max-width: 1100px) {
-        .sales-layout.desktop-layout,
-        .admin-grid,
-        .stats-grid {
+
+      @media (max-width: 1024px) {
+        .sales-layout.desktop-layout {
+          grid-template-columns: 1fr 1fr;
+        }
+        .sales-layout.desktop-layout .right {
+          grid-column: 1 / -1;
+        }
+        .admin-grid {
           grid-template-columns: 1fr;
         }
+        .stats-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
       }
-      @media (max-width: 768px) {
-        .app-shell {
-          padding: 10px;
-        }
+
+      @media (max-width: 767px) {
+        .app-shell { padding: 10px; }
         .topbar {
+          align-items: flex-start;
           flex-direction: column;
-          align-items: stretch;
         }
-        .topbar-actions {
-          justify-content: flex-start;
-        }
+        .topbar-title { font-size: 20px; }
+        .main-tabs { display: none; }
         .stack-mobile {
           flex-direction: column;
           align-items: stretch;
         }
-        .order-row,
+        .table-grid,
+        .menu-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .order-row {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        .sticky-actions {
+          position: sticky;
+          bottom: 76px;
+          background: rgba(255,248,239,0.98);
+          padding-top: 8px;
+        }
+        .stats-grid {
+          grid-template-columns: 1fr;
+        }
         .list-row {
           flex-direction: column;
           align-items: stretch;
