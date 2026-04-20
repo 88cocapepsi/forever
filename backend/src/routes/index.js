@@ -1,22 +1,17 @@
 import express from 'express';
-import { authRouter } from './authRoutes.js';
-import { productRouter } from './productRoutes.js';
-import { tableRouter } from './tableRoutes.js';
-import { orderRouter } from './orderRoutes.js';
-import { reportRouter } from './reportRoutes.js';
-import { warehouseRouter } from './warehouseRoutes.js';
-import { notificationRouter } from './notificationRoutes.js';
+import tableRouter from './tableRoutes.js';
 
-export const apiRouter = express.Router();
+const router = express.Router();
 
-apiRouter.get('/health', (_req, res) => {
-  res.json({ ok: true, message: 'FOREVER POS API is running' });
+// Health check route cho nhóm routes nếu cần test nhanh
+router.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'API routes working',
+  });
 });
 
-apiRouter.use('/auth', authRouter);
-apiRouter.use('/products', productRouter);
-apiRouter.use('/tables', tableRouter);
-apiRouter.use('/orders', orderRouter);
-apiRouter.use('/reports', reportRouter);
-apiRouter.use('/warehouse', warehouseRouter);
-apiRouter.use('/notifications', notificationRouter);
+// Tables
+router.use('/tables', tableRouter);
+
+export default router;
