@@ -249,6 +249,27 @@ function buildOrderPatchFromItems(items) {
   };
 }
 
+
+const LOCAL_NOTIFICATIONS_KEY = "forever_local_notifications";
+
+function loadLocalNotifications() {
+  try {
+    const raw = localStorage.getItem(LOCAL_NOTIFICATIONS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalNotifications(list) {
+  try {
+    localStorage.setItem(LOCAL_NOTIFICATIONS_KEY, JSON.stringify(Array.isArray(list) ? list : []));
+  } catch {
+    // ignore localStorage write error
+  }
+}
+
 export default function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < MOBILE_BREAKPOINT);
 
@@ -278,7 +299,7 @@ export default function App() {
   const [warehouseLogs, setWarehouseLogs] = useState([]);
   const [inventoryLogs, setInventoryLogs] = useState([]);
   const [users, setUsers] = useState([]);
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState(() => loadLocalNotifications());
   const [historyOrders, setHistoryOrders] = useState([]);
   const [reportSummary, setReportSummary] = useState(null);
 
@@ -348,6 +369,10 @@ export default function App() {
     const t = setTimeout(() => setToast(""), 3000);
     return () => clearTimeout(t);
   }, [toast]);
+  useEffect(() => {
+    saveLocalNotifications(notifications);
+  }, [notifications]);
+
 
   useEffect(() => {
     if (token) {
@@ -639,16 +664,44 @@ export default function App() {
   }
 
 
-  async function createNotification() {
-    return { success: true };
+  async function createNotification(payload = {}) {
+    const nextItem = {
+      _id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: payload.title || 'Thông báo',
+      message: payload.message || '',
+      type: payload.type || 'system',
+      level: payload.level || 'info',
+      createdAt: new Date().toISOString(),
+      readBy: [],
+    };
+
+    setNotifications((prev) => [nextItem, ...(Array.isArray(prev) ? prev : [])]);
+    return { success: true, notification: nextItem };
   }
 
-  async function markNotificationRead() {
+  async function markNotificationRead(id) {
+    setNotifications((prev) =>
+      (Array.isArray(prev) ? prev : []).map((item) =>
+        item._id === id
+          ? {
+              ...item,
+              readBy: Array.from(new Set([...(item.readBy || []), user?.id || 'local-user'])),
+            }
+          : item
+      )
+    );
     return { success: true };
   }
 
   async function markAllNotificationsRead() {
-    setToast("Hiện backend chưa bật thông báo");
+    setNotifications((prev) =>
+      (Array.isArray(prev) ? prev : []).map((item) => ({
+        ...item,
+        readBy: Array.from(new Set([...(item.readBy || []), user?.id || 'local-user'])),
+      }))
+    );
+    setToast('Đã đánh dấu tất cả thông báo là đã đọc');
+    return { success: true };
   }
 
 
@@ -1634,9 +1687,43 @@ export default function App() {
     return (
       <div className="panel">
         <div className="panel-head stack-mobile">
-          <div className="panel-title">Thông báo</div>
+          <div>
+            <div className="panel-title">Thông báo</div>
+            <div className="panel-sub">Đang dùng thông báo nội bộ trên máy hiện tại</div>
+          </div>
+          <div className="row-actions">
+            <button className="btn small" onClick={markAllNotificationsRead}>
+              Đọc tất cả
+            </button>
+          </div>
         </div>
-        <div className="empty-box">Hiện backend chưa bật thông báo đồng bộ. Anh đang dùng bản tối giản để tránh lỗi 404.</div>
+
+        <div className="list-table">
+          {notifications.length ? (
+            notifications.map((item) => {
+              const isRead = getNotificationRead(item, user?.id || 'local-user');
+              return (
+                <div key={item._id} className={`list-row notification-row ${isRead ? '' : 'unread'}`}>
+                  <div>
+                    <div className="list-name">
+                      {item.title || 'Thông báo'} {item.level ? `• ${item.level}` : ''}
+                    </div>
+                    <div className="list-sub">
+                      {item.message || ''} • {new Date(item.createdAt).toLocaleString('vi-VN')}
+                    </div>
+                  </div>
+                  {!isRead && (
+                    <button className="btn small" onClick={() => markNotificationRead(item._id)}>
+                      Đã đọc
+                    </button>
+                  )}
+                </div>
+              );
+            })
+          ) : (
+            <div className="empty-box">Chưa có thông báo nào</div>
+          )}
+        </div>
       </div>
     );
   }
