@@ -12,7 +12,6 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-
     username: {
       type: String,
       required: true,
@@ -20,23 +19,19 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
     },
-
     role: {
       type: String,
       enum: ['admin', 'staff'],
       default: 'staff',
     },
-
     passwordHash: {
       type: String,
       required: true,
     },
-
     passwordSalt: {
       type: String,
       required: true,
     },
-
     isActive: {
       type: Boolean,
       default: true,
@@ -49,14 +44,13 @@ const userSchema = new mongoose.Schema(
 
 userSchema.methods.setPassword = function setPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
-  const passwordHash = hashPassword(password, salt);
   this.passwordSalt = salt;
-  this.passwordHash = passwordHash;
+  this.passwordHash = hashPassword(password, salt);
 };
 
 userSchema.methods.verifyPassword = function verifyPassword(password) {
-  const passwordHash = hashPassword(password, this.passwordSalt);
-  return passwordHash === this.passwordHash;
+  const incomingHash = hashPassword(password, this.passwordSalt);
+  return incomingHash === this.passwordHash;
 };
 
 userSchema.methods.toSafeJSON = function toSafeJSON() {
