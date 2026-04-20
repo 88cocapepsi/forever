@@ -92,7 +92,6 @@ function emptyProductForm() {
     name: "",
     category: "Cà phê",
     price: "",
-    stock: "",
     unit: "ly",
     isActive: true,
   };
@@ -317,58 +316,16 @@ export default function App() {
     e.preventDefault();
     setError("");
     setLoading(true);
-
-    const username = String(loginForm.username || "").trim();
-    const password = String(loginForm.password || "").trim();
-
     try {
-      try {
-        const data = await api("/api/auth/login", {
-          method: "POST",
-          body: JSON.stringify({ username, password }),
-        });
+      const data = await api("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify(loginForm),
+      });
 
-        localStorage.setItem("forever_token", data.token || "__backend__");
-        localStorage.setItem("forever_user", JSON.stringify(data.user));
-        setToken(data.token || "__backend__");
-        setUser(data.user);
-        setToast("Đăng nhập thành công");
-        return;
-      } catch (err) {
-        const msg = String(err?.message || "");
-        const is404 = msg.includes("404");
-
-        if (!is404) {
-          throw err;
-        }
-      }
-
-      let localUser = null;
-
-      if (username === "admin" && password === "123456") {
-        localUser = {
-          id: "local-admin",
-          name: "Admin",
-          username: "admin",
-          role: "admin",
-        };
-      } else if (username === "staff" && password === "123456") {
-        localUser = {
-          id: "local-staff",
-          name: "Nhân viên",
-          username: "staff",
-          role: "staff",
-        };
-      }
-
-      if (!localUser) {
-        throw new Error("Sai tài khoản hoặc mật khẩu");
-      }
-
-      localStorage.setItem("forever_token", "__local_demo__");
-      localStorage.setItem("forever_user", JSON.stringify(localUser));
-      setToken("__local_demo__");
-      setUser(localUser);
+      localStorage.setItem("forever_token", data.token);
+      localStorage.setItem("forever_user", JSON.stringify(data.user));
+      setToken(data.token);
+      setUser(data.user);
       setToast("Đăng nhập thành công");
     } catch (err) {
       setError(err.message || "Đăng nhập thất bại");
@@ -443,9 +400,7 @@ export default function App() {
       const nextWarehouse = results[4].status === "fulfilled" ? results[4].value : [];
       const nextNotifications = results[5].status === "fulfilled" ? results[5].value : [];
 
-      setTables(
-        Array.isArray(nextTables) ? nextTables.map((table) => normalizeIncomingTable(table)) : []
-      );
+      setTables(Array.isArray(nextTables) ? nextTables.map((table) => normalizeIncomingTable(table)) : []);
       setProducts(Array.isArray(nextProducts) ? nextProducts : []);
       setHistoryOrders(Array.isArray(nextHistory) ? nextHistory : []);
       setReportSummary(nextReport || null);
@@ -518,7 +473,7 @@ export default function App() {
   }
 
   async function ensureCurrentOrder(tableId) {
-    if (!tableId) return null;
+    if (!tableId || !token) return null;
 
     const table = tables.find((t) => t._id === tableId);
     if (!table) return null;
@@ -538,15 +493,9 @@ export default function App() {
       setCurrentOrder(order);
       await syncAll();
       return order;
-    } catch {
-      const fallbackOrder = {
-        items: [],
-        subtotal: 0,
-        discount: 0,
-        total: 0,
-      };
-      setCurrentOrder(fallbackOrder);
-      return fallbackOrder;
+    } catch (err) {
+      setError(err.message || "Không mở được đơn");
+      return null;
     }
   }
 
@@ -683,7 +632,6 @@ export default function App() {
         name: productForm.name,
         category: productForm.category,
         price: Number(productForm.price || 0),
-        stock: Number(productForm.stock || 0),
         unit: productForm.unit,
         isActive: productForm.isActive,
       };
@@ -741,7 +689,6 @@ export default function App() {
       name: item.name || "",
       category: item.category || "Khác",
       price: item.price ?? "",
-      stock: item.stock ?? "",
       unit: item.unit || "ly",
       isActive: item.isActive !== false,
     });
@@ -1180,7 +1127,6 @@ export default function App() {
       normalizedTable.currentOrder && typeof normalizedTable.currentOrder === "object"
         ? normalizedTable.currentOrder
         : null;
-
     const selected = normalizedTable._id === selectedTableId;
     const busy = getTableBusy(normalizedTable);
 
@@ -1279,15 +1225,10 @@ export default function App() {
 
         <div className="menu-grid">
           {filteredProducts.map((item) => (
-            <button
-              key={item._id}
-              className="menu-card"
-              onClick={() => addProductToOrder(item)}
-              disabled={Number(item.stock || 0) <= 0}
-            >
+            <button key={item._id} className="menu-card" onClick={() => addProductToOrder(item)}>
               <div className="menu-card-name">{item.name}</div>
               <div className="menu-card-cat">
-                {item.category} • Tồn: {item.stock} {item.unit}
+                {item.category} {item.unit ? `• ${item.unit}` : ""}
               </div>
               <div className="menu-card-price">{formatMoney(item.price)}</div>
             </button>
@@ -1475,13 +1416,6 @@ export default function App() {
             />
             <input
               className="input"
-              type="number"
-              placeholder="Tồn kho"
-              value={productForm.stock}
-              onChange={(e) => setProductForm((p) => ({ ...p, stock: e.target.value }))}
-            />
-            <input
-              className="input"
               placeholder="Đơn vị"
               value={productForm.unit}
               onChange={(e) => setProductForm((p) => ({ ...p, unit: e.target.value }))}
@@ -1520,7 +1454,7 @@ export default function App() {
                 <div>
                   <div className="list-name">{item.name}</div>
                   <div className="list-sub">
-                    {item.category} • {formatMoney(item.price)} • Tồn: {item.stock} {item.unit}
+                    {item.category} • {formatMoney(item.price)} {item.unit ? `• ${item.unit}` : ""}
                   </div>
                 </div>
                 <div className="row-actions">
@@ -1530,40 +1464,6 @@ export default function App() {
                 </div>
               </div>
             ))}
-          </div>
-
-          <div className="divider" />
-
-          <div className="panel-title small-title">Nhập thêm kho sản phẩm</div>
-          <div className="form-col">
-            <select
-              className="input"
-              value={importProductId}
-              onChange={(e) => setImportProductId(e.target.value)}
-            >
-              <option value="">Chọn sản phẩm</option>
-              {products.map((p) => (
-                <option key={p._id} value={p._id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <input
-              className="input"
-              type="number"
-              placeholder="Số lượng nhập"
-              value={importForm.quantity}
-              onChange={(e) => setImportForm((p) => ({ ...p, quantity: e.target.value }))}
-            />
-            <input
-              className="input"
-              placeholder="Ghi chú"
-              value={importForm.note}
-              onChange={(e) => setImportForm((p) => ({ ...p, note: e.target.value }))}
-            />
-            <button className="btn btn-primary" onClick={importProductStock}>
-              Nhập kho
-            </button>
           </div>
         </div>
       </div>
