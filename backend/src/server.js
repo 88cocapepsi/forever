@@ -1,29 +1,45 @@
 import express from 'express';
-import morgan from 'morgan';
 import cors from 'cors';
-import { connectDatabase } from './db.js';
-import { config } from './config.js';
-import { apiRouter } from './routes/index.js';
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import apiRouter from './routes/index.js';
+
+dotenv.config();
 
 const app = express();
 
-app.use(cors({ origin: config.corsOrigin === '*' ? true : config.corsOrigin }));
+app.use(cors());
 app.use(express.json());
-app.use(morgan('dev'));
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, app: 'forever-pos-backend', now: new Date().toISOString() });
-});
-
-app.use('/api', apiRouter);
-
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(500).json({ message: err.message || 'Internal server error' });
-});
-
-connectDatabase().then(() => {
-  app.listen(config.port, () => {
-    console.log(`Forever POS backend running on port ${config.port}`);
+// test root
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'FOREVER POS backend is running',
   });
 });
+
+// api routes
+app.use('/api', apiRouter);
+
+const PORT = process.env.PORT || 5000;
+const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
+
+if (!MONGODB_URI) {
+  console.error('Thiếu MONGODB_URI hoặc MONGO_URI trong biến môi trường');
+  process.exit(1);
+}
+
+mongoose
+  .connect(MONGODB_URI)
+  .then(() => {
+    console.log('✅ MongoDB connected');
+
+    app.listen(PORT, () => {
+      console.log(`✅ Server running on port ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error('❌ MongoDB connection error:', error.message);
+    process.exit(1);
+  });
