@@ -3,7 +3,6 @@ import tableRouter from './tableRoutes.js';
 
 const router = express.Router();
 
-// test route
 router.get('/', (req, res) => {
   res.json({
     success: true,
@@ -11,7 +10,6 @@ router.get('/', (req, res) => {
   });
 });
 
-// tables API
 router.use('/tables', tableRouter);
 
 export default router;
