@@ -7,35 +7,41 @@ const notificationSchema = new mongoose.Schema(
       default: 'system',
       trim: true,
     },
+
     title: {
       type: String,
       default: '',
       trim: true,
     },
+
     message: {
       type: String,
       required: true,
       trim: true,
     },
+
     level: {
       type: String,
+      enum: ['info', 'success', 'warning', 'error'],
       default: 'info',
-      trim: true,
     },
+
     readBy: {
-      type: [String],
+      type: [String], // lưu userId hoặc username
       default: [],
     },
+
     meta: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
   },
   {
-    timestamps: true,
+    timestamps: true, // createdAt, updatedAt
   }
 );
 
+// tránh lỗi overwrite model khi dev
 const Notification =
   mongoose.models.Notification ||
   mongoose.model('Notification', notificationSchema);
