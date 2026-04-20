@@ -72,11 +72,14 @@ function getTableOrderId(table) {
 }
 
 function getOrderTotal(order) {
-  return Number(order?.subtotal || 0);
+  return Number(order?.total || order?.subtotal || 0);
 }
 
 function getOrderQty(order) {
-  return (order?.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+  return (order?.items || []).reduce(
+    (sum, item) => sum + Number(item.quantity || item.qty || 0),
+    0
+  );
 }
 
 function getUnreadCount(list, currentUserId) {
@@ -183,6 +186,66 @@ function normalizeIncomingTable(table) {
     ...table,
     area,
     zone: getZoneLabel({ ...table, area }),
+  };
+}
+
+function normalizeOrderForUI(order) {
+  const safeOrder = order && typeof order === "object" ? order : {};
+  const items = Array.isArray(safeOrder.items)
+    ? safeOrder.items.map((item, index) => ({
+        ...item,
+        product: item.product || item.productId || item._id || `${item.name || "item"}-${index}`,
+        productId: item.productId || item.product || item._id || item.name || '',
+        quantity: Number(item.quantity || item.qty || 0),
+        qty: Number(item.qty || item.quantity || 0),
+      }))
+    : [];
+
+  const subtotal = Number(
+    safeOrder.subtotal ||
+      items.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0), 0)
+  );
+
+  return {
+    ...safeOrder,
+    items,
+    subtotal,
+    total: Number(safeOrder.total || subtotal),
+  };
+}
+
+function buildEmptyCurrentOrder() {
+  return {
+    items: [],
+    subtotal: 0,
+    total: 0,
+    discount: 0,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function buildOrderPatchFromItems(items) {
+  const normalizedItems = (items || []).map((item) => ({
+    productId: item.productId || item.product || item._id || item.name || '',
+    product: item.product || item.productId || item._id || item.name || '',
+    name: item.name || '',
+    price: Number(item.price || 0),
+    quantity: Number(item.quantity || item.qty || 0),
+    qty: Number(item.qty || item.quantity || 0),
+    note: item.note || '',
+  }));
+
+  const subtotal = normalizedItems.reduce(
+    (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || item.qty || 0),
+    0
+  );
+
+  return {
+    items: normalizedItems,
+    subtotal,
+    total: subtotal,
+    discount: 0,
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -376,61 +439,30 @@ export default function App() {
     setSyncing(true);
 
     try {
-      const tasks = [
-        api("/api/tables", {}, token),
-        api("/api/products", {}, token),
-        api("/api/orders/history?limit=100", {}, token),
-        api("/api/reports/summary", {}, token),
-        api("/api/warehouse", {}, token),
-        api("/api/notifications?limit=100", {}, token),
-      ];
+      const tasks = [api("/api/tables", {}, token), api("/api/products", {}, token)];
 
       if (isAdmin) {
         tasks.push(api("/api/auth/users", {}, token));
-        tasks.push(api("/api/warehouse/logs", {}, token));
-        tasks.push(api("/api/products/inventory/logs", {}, token));
       }
 
       const results = await Promise.allSettled(tasks);
 
       const nextTables = results[0].status === "fulfilled" ? results[0].value : [];
       const nextProducts = results[1].status === "fulfilled" ? results[1].value : [];
-      const nextHistory = results[2].status === "fulfilled" ? results[2].value : [];
-      const nextReport = results[3].status === "fulfilled" ? results[3].value : null;
-      const nextWarehouse = results[4].status === "fulfilled" ? results[4].value : [];
-      const nextNotifications = results[5].status === "fulfilled" ? results[5].value : [];
+      const nextUsers = isAdmin && results[2]?.status === "fulfilled" ? results[2].value : [];
 
-      setTables(Array.isArray(nextTables) ? nextTables.map((table) => normalizeIncomingTable(table)) : []);
+      setTables(
+        Array.isArray(nextTables) ? nextTables.map((table) => normalizeIncomingTable(table)) : []
+      );
       setProducts(Array.isArray(nextProducts) ? nextProducts : []);
-      setHistoryOrders(Array.isArray(nextHistory) ? nextHistory : []);
-      setReportSummary(nextReport || null);
-      setWarehouseItems(Array.isArray(nextWarehouse) ? nextWarehouse : []);
+      setUsers(Array.isArray(nextUsers) ? nextUsers : []);
 
-      const notificationList = Array.isArray(nextNotifications) ? nextNotifications : [];
-      setNotifications(notificationList);
-
-      if (notificationList.length > 0) {
-        const latest = notificationList[0];
-
-        if (
-          lastSeenNotificationIdRef.current &&
-          latest?._id &&
-          latest._id !== lastSeenNotificationIdRef.current &&
-          latest.type === "payment"
-        ) {
-          setToast(latest.message || "Có bàn vừa thanh toán");
-        }
-
-        if (latest?._id) {
-          lastSeenNotificationIdRef.current = latest._id;
-        }
-      }
-
-      if (isAdmin) {
-        setUsers(Array.isArray(results[6]?.value) ? results[6].value : []);
-        setWarehouseLogs(Array.isArray(results[7]?.value) ? results[7].value : []);
-        setInventoryLogs(Array.isArray(results[8]?.value) ? results[8].value : []);
-      }
+      setHistoryOrders([]);
+      setReportSummary(null);
+      setWarehouseItems([]);
+      setWarehouseLogs([]);
+      setInventoryLogs([]);
+      setNotifications([]);
 
       if (selectedTableId) {
         await refreshCurrentOrderForTable(selectedTableId, nextTables);
@@ -446,81 +478,107 @@ export default function App() {
 
   async function refreshCurrentOrderForTable(tableId, tableList = tables) {
     try {
-      const table = (tableList || []).find((t) => t._id === tableId);
+      const normalizedTableList = Array.isArray(tableList)
+        ? tableList.map((table) => normalizeIncomingTable(table))
+        : [];
+      const table = normalizedTableList.find((t) => t._id === tableId);
+
       if (!table) {
-        setCurrentOrder(null);
-        return null;
+        setCurrentOrder(buildEmptyCurrentOrder());
+        return buildEmptyCurrentOrder();
       }
 
-      if (table.currentOrder && typeof table.currentOrder === "object") {
-        if (tableId === selectedTableId) setCurrentOrder(table.currentOrder);
-        return table.currentOrder;
-      }
-
-      const orderId = getTableOrderId(table);
-      if (!orderId) {
-        setCurrentOrder(null);
-        return null;
-      }
-
-      const order = await api(`/api/orders/${orderId}`, {}, token);
-      if (tableId === selectedTableId) setCurrentOrder(order);
-      return order;
+      const nextOrder = normalizeOrderForUI(table.currentOrder || buildEmptyCurrentOrder());
+      if (tableId === selectedTableId) setCurrentOrder(nextOrder);
+      return nextOrder;
     } catch {
-      if (tableId === selectedTableId) setCurrentOrder(null);
-      return null;
+      const emptyOrder = buildEmptyCurrentOrder();
+      if (tableId === selectedTableId) setCurrentOrder(emptyOrder);
+      return emptyOrder;
     }
   }
 
   async function ensureCurrentOrder(tableId) {
-    if (!tableId || !token) return null;
+    if (!tableId) return buildEmptyCurrentOrder();
 
     const table = tables.find((t) => t._id === tableId);
-    if (!table) return null;
+    if (!table) return buildEmptyCurrentOrder();
 
-    if (table.currentOrder && typeof table.currentOrder === "object") {
-      setCurrentOrder(table.currentOrder);
-      return table.currentOrder;
+    const order = normalizeOrderForUI(table.currentOrder || buildEmptyCurrentOrder());
+    setCurrentOrder(order);
+    return order;
+  }
+
+  async function updateTableOrder(tableId, items, successMessage = "") {
+    const table = tables.find((t) => t._id === tableId);
+    if (!table) {
+      throw new Error("Không tìm thấy bàn");
     }
 
-    const existingOrderId = getTableOrderId(table);
-    if (existingOrderId) {
-      return refreshCurrentOrderForTable(tableId);
+    const orderPatch = buildOrderPatchFromItems(items);
+    const nextStatus = orderPatch.items.length > 0 ? "serving" : "empty";
+
+    const updatedTableResponse = await api(
+      `/api/tables/${tableId}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          name: table.name,
+          area: table.area || normalizeArea(table),
+          status: nextStatus,
+          note: table.note || "",
+          customerName: table.customerName || "",
+          currentOrder: orderPatch,
+        }),
+      },
+      token
+    );
+
+    const updatedOrder = normalizeOrderForUI(updatedTableResponse?.currentOrder || orderPatch);
+    setCurrentOrder(updatedOrder);
+    await syncAll();
+
+    if (successMessage) {
+      setToast(successMessage);
     }
 
-    try {
-      const order = await api(`/api/orders/table/${tableId}/open`, { method: "POST" }, token);
-      setCurrentOrder(order);
-      await syncAll();
-      return order;
-    } catch (err) {
-      setError(err.message || "Không mở được đơn");
-      return null;
-    }
+    return updatedOrder;
   }
 
   async function addProductToOrder(product) {
     try {
-      let order = currentOrder;
-      if (!order?._id) {
-        order = await ensureCurrentOrder(selectedTableId);
-        if (!order?._id) return;
+      if (!selectedTableId) {
+        setToast("Vui lòng chọn bàn trước");
+        return;
       }
 
-      const nextOrder = await api(
-        `/api/orders/${order._id}/items`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            productId: product._id,
-            quantity: 1,
-          }),
-        },
-        token
+      const order = await ensureCurrentOrder(selectedTableId);
+      const items = Array.isArray(order?.items) ? [...order.items] : [];
+      const productKey = product._id || product.name;
+      const index = items.findIndex(
+        (item) => (item.productId || item.product || item.name) === productKey || item.name === product.name
       );
 
-      setCurrentOrder(nextOrder);
-      await syncAll();
+      if (index >= 0) {
+        const currentQty = Number(items[index].quantity || items[index].qty || 0);
+        items[index] = {
+          ...items[index],
+          quantity: currentQty + 1,
+          qty: currentQty + 1,
+        };
+      } else {
+        items.push({
+          product: productKey,
+          productId: productKey,
+          name: product.name,
+          price: Number(product.price || 0),
+          quantity: 1,
+          qty: 1,
+          note: "",
+        });
+      }
+
+      await updateTableOrder(selectedTableId, items);
     } catch (err) {
       setError(err.message || "Không thêm món được");
     }
@@ -528,19 +586,28 @@ export default function App() {
 
   async function updateOrderItemQuantity(item, nextQty) {
     try {
-      if (!currentOrder?._id) return;
+      if (!selectedTableId) return;
 
-      const nextOrder = await api(
-        `/api/orders/${currentOrder._id}/items/${item.product}`,
-        {
-          method: "PUT",
-          body: JSON.stringify({ quantity: nextQty }),
-        },
-        token
-      );
+      const order = await ensureCurrentOrder(selectedTableId);
+      const items = Array.isArray(order?.items) ? [...order.items] : [];
+      const itemKey = item.product || item.productId || item.name;
 
-      setCurrentOrder(nextOrder);
-      await syncAll();
+      const nextItems = items
+        .map((row) => {
+          const rowKey = row.product || row.productId || row.name;
+          if (rowKey !== itemKey) return row;
+
+          if (nextQty <= 0) return null;
+
+          return {
+            ...row,
+            quantity: Number(nextQty),
+            qty: Number(nextQty),
+          };
+        })
+        .filter(Boolean);
+
+      await updateTableOrder(selectedTableId, nextItems);
     } catch (err) {
       setError(err.message || "Không cập nhật món được");
     }
@@ -548,30 +615,22 @@ export default function App() {
 
   async function payCurrentOrder() {
     try {
-      if (!currentOrder?._id || !(currentOrder.items || []).length) {
+      const order = normalizeOrderForUI(currentOrder || buildEmptyCurrentOrder());
+
+      if (!(order.items || []).length) {
         setToast("Đơn hiện tại đang trống");
         return;
       }
 
-      const paidOrder = await api(
-        `/api/orders/${currentOrder._id}/pay`,
-        { method: "POST" },
-        token
-      );
-
-      try {
-        await createNotification({
-          type: "payment",
-          title: "Thanh toán bàn",
-          message: `${selectedTable?.name || "Bàn"} - ${formatMoney(paidOrder.subtotal)}`,
-          level: "success",
-        });
-      } catch {
-        // ignore
-      }
+      const paidOrder = {
+        ...order,
+        paidAt: new Date().toISOString(),
+      };
 
       printBill(paidOrder, selectedTable?.name || "Bàn", user?.name || "admin", false);
-      setCurrentOrder(null);
+
+      await api(`/api/tables/${selectedTableId}/clear-order`, { method: "PATCH" }, token);
+      setCurrentOrder(buildEmptyCurrentOrder());
       await syncAll();
       setToast("Thanh toán thành công");
     } catch (err) {
@@ -579,46 +638,23 @@ export default function App() {
     }
   }
 
-  async function createNotification(payload) {
-    return api(
-      "/api/notifications",
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      },
-      token
-    );
+
+  async function createNotification() {
+    return { success: true };
   }
 
-  async function markNotificationRead(id) {
-    try {
-      const updated = await api(`/api/notifications/${id}/read`, { method: "PUT" }, token);
-      setNotifications((prev) =>
-        prev.map((item) => (item._id === id ? updated : item))
-      );
-    } catch (err) {
-      setError(err.message || "Không đánh dấu đã đọc được");
-    }
+  async function markNotificationRead() {
+    return { success: true };
   }
 
   async function markAllNotificationsRead() {
-    try {
-      await api("/api/notifications/read-all/all", { method: "PUT" }, token);
-      await syncAll();
-    } catch (err) {
-      setError(err.message || "Không cập nhật được tất cả thông báo");
-    }
+    setToast("Hiện backend chưa bật thông báo");
   }
+
 
   async function seedDefaultTables() {
     try {
       await api("/api/tables/seed-default", { method: "POST" }, token);
-      await createNotification({
-        type: "system",
-        title: "Khởi tạo bàn",
-        message: "Đã tạo bộ bàn mặc định",
-        level: "info",
-      });
       await syncAll();
       setToast("Đã tạo bàn mặc định");
     } catch (err) {
@@ -697,128 +733,24 @@ export default function App() {
   }
 
   async function importProductStock() {
-    try {
-      if (!importProductId || Number(importForm.quantity || 0) <= 0) {
-        setToast("Nhập số lượng nhập kho hợp lệ");
-        return;
-      }
-
-      await api(
-        `/api/products/${importProductId}/import`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            quantity: Number(importForm.quantity || 0),
-            note: importForm.note,
-          }),
-        },
-        token
-      );
-
-      const productName = products.find((p) => p._id === importProductId)?.name || "sản phẩm";
-
-      await createNotification({
-        type: "stock",
-        title: "Nhập kho sản phẩm",
-        message: `Đã nhập thêm cho ${productName}`,
-        level: "success",
-      });
-
-      setImportForm(emptyImportForm());
-      setImportProductId("");
-      setToast("Đã nhập kho sản phẩm");
-      await syncAll();
-    } catch (err) {
-      setError(err.message || "Không nhập kho được");
-    }
+    setToast("Hiện backend chưa bật nhập kho sản phẩm");
   }
+
 
   async function saveWarehouseItem() {
-    try {
-      const payload = {
-        name: warehouseForm.name,
-        quantity: Number(warehouseForm.quantity || 0),
-        unit: warehouseForm.unit,
-        note: warehouseForm.note,
-      };
-
-      if (!payload.name.trim()) {
-        setToast("Nhập tên hàng kho");
-        return;
-      }
-
-      if (editingWarehouseId) {
-        await api(
-          `/api/warehouse/${editingWarehouseId}`,
-          {
-            method: "PUT",
-            body: JSON.stringify(payload),
-          },
-          token
-        );
-        await createNotification({
-          type: "warehouse",
-          title: "Cập nhật kho riêng",
-          message: `Đã cập nhật ${payload.name}`,
-          level: "info",
-        });
-        setToast("Đã cập nhật kho");
-      } else {
-        await api(
-          "/api/warehouse",
-          {
-            method: "POST",
-            body: JSON.stringify(payload),
-          },
-          token
-        );
-        await createNotification({
-          type: "warehouse",
-          title: "Thêm hàng kho",
-          message: `Đã thêm ${payload.name}`,
-          level: "success",
-        });
-        setToast("Đã thêm hàng kho");
-      }
-
-      setWarehouseForm(emptyWarehouseForm());
-      setEditingWarehouseId(null);
-      await syncAll();
-    } catch (err) {
-      setError(err.message || "Không lưu được kho");
-    }
+    setToast("Hiện backend chưa bật kho riêng");
   }
 
-  function startEditWarehouse(item) {
-    setEditingWarehouseId(item._id);
-    setWarehouseForm({
-      name: item.name || "",
-      quantity: item.quantity ?? "",
-      unit: item.unit || "cái",
-      note: item.note || "",
-    });
-    setActiveMainTab("admin");
-    setActiveAdminTab("warehouse");
+
+  function startEditWarehouse() {
+    setToast("Hiện backend chưa bật kho riêng");
   }
 
-  async function deleteWarehouseItem(id) {
-    if (!window.confirm("Xóa hàng kho này?")) return;
 
-    try {
-      const item = warehouseItems.find((x) => x._id === id);
-      await api(`/api/warehouse/${id}`, { method: "DELETE" }, token);
-      await createNotification({
-        type: "warehouse",
-        title: "Xóa hàng kho",
-        message: `Đã xóa ${item?.name || "hàng kho"}`,
-        level: "warning",
-      });
-      setToast("Đã xóa hàng kho");
-      await syncAll();
-    } catch (err) {
-      setError(err.message || "Không xóa được hàng kho");
-    }
+  async function deleteWarehouseItem() {
+    setToast("Hiện backend chưa bật kho riêng");
   }
+
 
   async function saveUser() {
     try {
@@ -1252,7 +1184,7 @@ export default function App() {
         <div className="order-list">
           {(currentOrder?.items || []).length ? (
             currentOrder.items.map((item) => (
-              <div key={item.product} className="order-row">
+              <div key={item.product || item.productId || item.name} className="order-row">
                 <div className="order-main">
                   <div className="order-name">{item.name}</div>
                   <div className="order-price">{formatMoney(item.price)}</div>
@@ -1261,21 +1193,21 @@ export default function App() {
                 <div className="qty-box">
                   <button
                     className="qty-btn"
-                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || 0) - 1)}
+                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || item.qty || 0) - 1)}
                   >
                     -
                   </button>
-                  <span className="qty-num">{item.quantity}</span>
+                  <span className="qty-num">{item.quantity || item.qty || 0}</span>
                   <button
                     className="qty-btn"
-                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || 0) + 1)}
+                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || item.qty || 0) + 1)}
                   >
                     +
                   </button>
                 </div>
 
                 <div className="order-line-total">
-                  {formatMoney(Number(item.price || 0) * Number(item.quantity || 0))}
+                  {formatMoney(Number(item.price || 0) * Number(item.quantity || item.qty || 0))}
                 </div>
               </div>
             ))
@@ -1300,7 +1232,7 @@ export default function App() {
             className="btn"
             onClick={() => {
               if (!currentOrder) return setToast("Chưa có bill để in");
-              printBill(currentOrder, selectedTable?.name || "Bàn", user?.name || "admin", true);
+              printBill(normalizeOrderForUI(currentOrder), selectedTable?.name || "Bàn", user?.name || "admin", true);
             }}
           >
             In bill tạm
@@ -1450,7 +1382,7 @@ export default function App() {
           <div className="panel-title small-title">Danh sách sản phẩm</div>
           <div className="list-table">
             {products.map((item) => (
-              <div key={item._id} className="list-row">
+              <div key={item._id || item.name} className="list-row">
                 <div>
                   <div className="list-name">{item.name}</div>
                   <div className="list-sub">
@@ -1469,6 +1401,7 @@ export default function App() {
       </div>
     );
   }
+
 
   function renderAdminWarehouse() {
     return (
@@ -1673,30 +1606,16 @@ export default function App() {
               Sản phẩm
             </button>
             <button
-              className={`sub-tab ${activeAdminTab === "warehouse" ? "active" : ""}`}
-              onClick={() => setActiveAdminTab("warehouse")}
-            >
-              Kho riêng
-            </button>
-            <button
               className={`sub-tab ${activeAdminTab === "users" ? "active" : ""}`}
               onClick={() => setActiveAdminTab("users")}
             >
               Tài khoản
             </button>
-            <button
-              className={`sub-tab ${activeAdminTab === "logs" ? "active" : ""}`}
-              onClick={() => setActiveAdminTab("logs")}
-            >
-              Log
-            </button>
           </div>
         </div>
 
         {activeAdminTab === "products" && renderAdminProducts()}
-        {activeAdminTab === "warehouse" && renderAdminWarehouse()}
         {activeAdminTab === "users" && renderAdminUsers()}
-        {activeAdminTab === "logs" && renderAdminLogs()}
       </div>
     );
   }
@@ -1705,155 +1624,23 @@ export default function App() {
     return (
       <div className="panel">
         <div className="panel-title">Báo cáo</div>
-
-        <div className="stats-grid">
-          <div className="stat-card">
-            <div className="stat-label">Doanh thu hôm nay</div>
-            <div className="stat-value">{formatMoney(reportSummary?.todayRevenue)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Doanh thu tháng</div>
-            <div className="stat-value">{formatMoney(reportSummary?.monthRevenue)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Doanh thu năm</div>
-            <div className="stat-value">{formatMoney(reportSummary?.yearRevenue)}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Số đơn hôm nay</div>
-            <div className="stat-value">{reportSummary?.todayOrders || 0}</div>
-          </div>
-        </div>
-
-        <div className="admin-grid">
-          <div className="panel inner">
-            <div className="panel-title small-title">Top món tháng này</div>
-            <div className="list-table">
-              {(reportSummary?.topProducts || []).map((item, idx) => (
-                <div key={`${item._id}-${idx}`} className="list-row">
-                  <div>
-                    <div className="list-name">{item._id}</div>
-                    <div className="list-sub">
-                      SL: {item.qty} • Doanh thu: {formatMoney(item.revenue)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="panel inner">
-            <div className="panel-title small-title">Món sắp hết hàng</div>
-            <div className="list-table">
-              {(reportSummary?.lowStock || []).map((item) => (
-                <div key={item._id} className="list-row">
-                  <div>
-                    <div className="list-name">{item.name}</div>
-                    <div className="list-sub">
-                      Còn {item.stock} {item.unit}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="admin-grid">
-          <div className="panel inner">
-            <div className="panel-title small-title">Thống kê theo ca</div>
-            <div className="list-table">
-              {(reportSummary?.shiftStats || []).map((shift) => (
-                <div key={shift.name} className="list-row">
-                  <div>
-                    <div className="list-name">{shift.name}</div>
-                    <div className="list-sub">
-                      {shift.orders} đơn • {formatMoney(shift.revenue)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="panel inner">
-            <div className="panel-head stack-mobile">
-              <div className="panel-title small-title">Lịch sử thanh toán</div>
-              <button className="btn small" onClick={() => setShowMoreHistory((p) => !p)}>
-                {showMoreHistory ? "Thu gọn" : "Xem thêm"}
-              </button>
-            </div>
-            <div className="list-table">
-              {visibleHistory.map((order) => (
-                <div key={order._id} className="list-row">
-                  <div>
-                    <div className="list-name">{formatMoney(order.subtotal)}</div>
-                    <div className="list-sub">
-                      {new Date(order.paidAt).toLocaleString("vi-VN")}
-                    </div>
-                  </div>
-                  <button
-                    className="btn small"
-                    onClick={() =>
-                      printBill(order, order?.tableName || "Đã thanh toán", user?.name || "admin", false)
-                    }
-                  >
-                    In lại
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <div className="empty-box">Hiện backend chưa bật báo cáo. Anh đang dùng bản tối giản để tránh lỗi 404.</div>
       </div>
     );
   }
+
 
   function renderNotifications() {
     return (
       <div className="panel">
         <div className="panel-head stack-mobile">
-          <div className="panel-title">Thông báo đồng bộ</div>
-          <div className="row-actions">
-            <button className="btn small" onClick={syncAll}>
-              Làm mới
-            </button>
-            <button className="btn small" onClick={markAllNotificationsRead}>
-              Đọc tất cả
-            </button>
-          </div>
+          <div className="panel-title">Thông báo</div>
         </div>
-
-        <div className="list-table">
-          {notifications.length ? (
-            notifications.map((item) => {
-              const isRead = getNotificationRead(item, user?.id);
-              return (
-                <div key={item._id} className={`list-row notification-row ${isRead ? "" : "unread"}`}>
-                  <div>
-                    <div className="list-name">
-                      {item.title || "Thông báo"} {item.level ? `• ${item.level}` : ""}
-                    </div>
-                    <div className="list-sub">
-                      {item.message || ""} •{" "}
-                      {new Date(item.createdAt).toLocaleString("vi-VN")}
-                    </div>
-                  </div>
-                  {!isRead && (
-                    <button className="btn small" onClick={() => markNotificationRead(item._id)}>
-                      Đã đọc
-                    </button>
-                  )}
-                </div>
-              );
-            })
-          ) : (
-            <div className="empty-box">Chưa có thông báo</div>
-          )}
-        </div>
+        <div className="empty-box">Hiện backend chưa bật thông báo đồng bộ. Anh đang dùng bản tối giản để tránh lỗi 404.</div>
       </div>
     );
   }
+
 
   function renderMobileHomeButton() {
     if (!isMobile) return null;
