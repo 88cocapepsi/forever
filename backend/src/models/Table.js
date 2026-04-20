@@ -70,31 +70,26 @@ const tableSchema = new mongoose.Schema(
       trim: true,
       unique: true,
     },
-
     area: {
       type: String,
       enum: ['front', 'back', 'vip', 'other'],
       default: 'other',
     },
-
     status: {
       type: String,
       enum: ['empty', 'serving', 'paid', 'reserved'],
       default: 'empty',
     },
-
     note: {
       type: String,
       default: '',
       trim: true,
     },
-
     customerName: {
       type: String,
       default: '',
       trim: true,
     },
-
     currentOrder: {
       type: currentOrderSchema,
       default: () => ({
