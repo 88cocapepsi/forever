@@ -1,13 +1,138 @@
 import mongoose from 'mongoose';
 
-const tableSchema = new mongoose.Schema(
+const orderItemSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, unique: true, trim: true },
-    zone: { type: String, default: 'Sảnh trước', trim: true },
-    type: { type: String, enum: ['table', 'takeaway', 'delivery'], default: 'table' },
-    currentOrder: { type: mongoose.Schema.Types.ObjectId, ref: 'Order', default: null }
+    productId: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    price: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: 0,
+    },
+    qty: {
+      type: Number,
+      required: true,
+      default: 1,
+      min: 1,
+    },
+    note: {
+      type: String,
+      default: '',
+      trim: true,
+    },
   },
-  { timestamps: true }
+  { _id: false }
 );
 
-export const PosTable = mongoose.model('PosTable', tableSchema);
+const currentOrderSchema = new mongoose.Schema(
+  {
+    items: {
+      type: [orderItemSchema],
+      default: [],
+    },
+    subtotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    discount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    total: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false }
+);
+
+const tableSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+      unique: true,
+    },
+
+    area: {
+      type: String,
+      enum: ['front', 'back', 'vip', 'other'],
+      default: 'other',
+    },
+
+    status: {
+      type: String,
+      enum: ['empty', 'serving', 'paid', 'reserved'],
+      default: 'empty',
+    },
+
+    note: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    customerName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+
+    currentOrder: {
+      type: currentOrderSchema,
+      default: () => ({
+        items: [],
+        subtotal: 0,
+        discount: 0,
+        total: 0,
+        updatedAt: new Date(),
+      }),
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+tableSchema.pre('save', function (next) {
+  if (this.currentOrder) {
+    this.currentOrder.updatedAt = new Date();
+
+    const items = Array.isArray(this.currentOrder.items) ? this.currentOrder.items : [];
+
+    const subtotal = items.reduce((sum, item) => {
+      const price = Number(item.price || 0);
+      const qty = Number(item.qty || 0);
+      return sum + price * qty;
+    }, 0);
+
+    const discount = Number(this.currentOrder.discount || 0);
+    const total = Math.max(0, subtotal - discount);
+
+    this.currentOrder.subtotal = subtotal;
+    this.currentOrder.total = total;
+  }
+
+  next();
+});
+
+const Table = mongoose.models.Table || mongoose.model('Table', tableSchema);
+
+export default Table;
