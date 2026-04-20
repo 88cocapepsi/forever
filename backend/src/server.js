@@ -3,6 +3,7 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import apiRouter from './routes/index.js';
+import { ensureDefaultAdmin } from './routes/authRoutes.js';
 
 dotenv.config();
 
@@ -30,8 +31,10 @@ if (!MONGODB_URI) {
 
 mongoose
   .connect(MONGODB_URI)
-  .then(() => {
+  .then(async () => {
     console.log('✅ MongoDB connected');
+
+    await ensureDefaultAdmin();
 
     app.listen(PORT, () => {
       console.log(`✅ Server running on port ${PORT}`);
