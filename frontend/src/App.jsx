@@ -345,7 +345,7 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedTableId || !token) return;
-    ensureCurrentOrder(selectedTableId);
+    refreshCurrentOrderForTable(selectedTableId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTableId, tables.length, token]);
 
@@ -527,7 +527,9 @@ export default function App() {
 
   async function refreshCurrentOrderForTable(tableId, tableList = tables) {
     try {
-      const table = (tableList || []).find((t) => t._id === tableId);
+      const list = Array.isArray(tableList) && tableList.length ? tableList : tables;
+      const table = (list || []).find((t) => t._id === tableId);
+
       if (!table) {
         setCurrentOrder(null);
         return null;
@@ -536,22 +538,22 @@ export default function App() {
       // Chỉ nhận currentOrder object khi có _id thật.
       // Object không có _id là dữ liệu cũ/fallback và phải bỏ qua.
       if (table.currentOrder && typeof table.currentOrder === "object" && table.currentOrder._id) {
-        if (tableId === selectedTableId) setCurrentOrder(table.currentOrder);
+        setCurrentOrder(table.currentOrder);
         return table.currentOrder;
       }
 
       const orderId = getTableOrderId(table);
       if (!orderId) {
-        if (tableId === selectedTableId) setCurrentOrder(null);
+        setCurrentOrder(null);
         return null;
       }
 
       const order = await api(`/api/orders/${orderId}`, {}, token);
-      if (tableId === selectedTableId) setCurrentOrder(order);
+      setCurrentOrder(order);
       return order;
     } catch (err) {
       console.error("❌ REFRESH ORDER ERROR:", err);
-      if (tableId === selectedTableId) setCurrentOrder(null);
+      setCurrentOrder(null);
       return null;
     }
   }
@@ -1317,12 +1319,19 @@ export default function App() {
       <button
         key={normalizedTable._id}
         className={`table-card ${selected ? "selected" : ""} ${busy ? "busy" : ""}`}
-        onClick={() => setSelectedTableId(normalizedTable._id)}
+        onClick={async () => {
+          setSelectedTableId(normalizedTable._id);
+          await refreshCurrentOrderForTable(normalizedTable._id);
+        }}
       >
-        <div className="table-name">{normalizedTable.name}</div>
+        <div className="table-card-top">
+          <div className="table-name">{normalizedTable.name}</div>
+          <span className={`status-pill ${busy ? "busy" : "empty"}`}>
+            {busy ? "Đang phục vụ" : "Trống"}
+          </span>
+        </div>
         <div className="table-meta">{getZoneLabel(normalizedTable)}</div>
-        <div className="table-meta">{busy ? "Đang phục vụ" : "Trống"}</div>
-        <div className="table-total">{order ? formatMoney(order.subtotal) : "---"}</div>
+        <div className="table-total">{order ? formatMoney(order.subtotal) : formatMoney(0)}</div>
       </button>
     );
   }
@@ -2140,7 +2149,14 @@ function StyleTag() {
         font-family: Arial, Helvetica, sans-serif;
         background: #f7f2ea;
         color: #2e2018;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: geometricPrecision;
       }
+      ::selection { background: rgba(141, 90, 44, 0.18); }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: rgba(232, 218, 200, 0.35); border-radius: 999px; }
+      ::-webkit-scrollbar-thumb { background: rgba(141, 90, 44, 0.42); border-radius: 999px; }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(141, 90, 44, 0.65); }
       button, input, select, textarea { font: inherit; }
       .app-shell {
         min-height: 100vh;
@@ -2250,6 +2266,9 @@ function StyleTag() {
         box-shadow: 0 12px 30px rgba(0,0,0,0.18);
       }
       .topbar {
+        position: sticky;
+        top: 10px;
+        z-index: 30;
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -2312,11 +2331,12 @@ function StyleTag() {
         padding-bottom: 84px;
       }
       .panel {
-        background: rgba(255,255,255,0.86);
-        border: 1px solid #e4d4c1;
-        border-radius: 24px;
-        padding: 14px;
-        box-shadow: 0 12px 30px rgba(85,57,32,0.06);
+        background: rgba(255,255,255,0.90);
+        border: 1px solid rgba(198, 164, 127, 0.46);
+        border-radius: 26px;
+        padding: 16px;
+        box-shadow: 0 18px 45px rgba(85,57,32,0.09);
+        backdrop-filter: blur(16px);
       }
       .panel.inner {
         background: #fffaf5;
@@ -2374,31 +2394,72 @@ function StyleTag() {
       .table-card {
         text-align: left;
         border: 1px solid #e0cfba;
-        background: #fffdf9;
-        border-radius: 18px;
+        background: linear-gradient(180deg, #fffdf9 0%, #fffaf4 100%);
+        border-radius: 20px;
         padding: 14px;
         cursor: pointer;
+        min-height: 126px;
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+      }
+      .table-card::after {
+        content: "";
+        position: absolute;
+        inset: auto -18px -28px auto;
+        width: 84px;
+        height: 84px;
+        background: radial-gradient(circle, rgba(141,90,44,0.12), transparent 68%);
+        pointer-events: none;
+      }
+      .table-card:hover {
+        transform: translateY(-2px);
+        border-color: #bb8b5b;
+        box-shadow: 0 14px 28px rgba(92, 58, 28, 0.12);
       }
       .table-card.selected {
         border-color: #8e5d33;
-        box-shadow: 0 0 0 3px rgba(142,93,51,0.12);
+        box-shadow: 0 0 0 3px rgba(142,93,51,0.16), 0 14px 28px rgba(92,58,28,0.13);
       }
       .table-card.busy {
-        background: linear-gradient(180deg, #fff6ea 0%, #f7e8d4 100%);
+        background: linear-gradient(180deg, #fff4e6 0%, #f5e1c8 100%);
+      }
+      .table-card-top {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
       }
       .table-name {
-        font-size: 16px;
+        font-size: 17px;
+        font-weight: 950;
+        letter-spacing: -0.02em;
+      }
+      .status-pill {
+        border-radius: 999px;
+        padding: 5px 8px;
+        font-size: 11px;
         font-weight: 900;
+        white-space: nowrap;
+      }
+      .status-pill.empty {
+        background: #f5eadb;
+        color: #84552e;
+      }
+      .status-pill.busy {
+        background: #8d5a2c;
+        color: #fff;
+        box-shadow: 0 8px 18px rgba(141,90,44,0.22);
       }
       .table-meta {
-        margin-top: 6px;
+        margin-top: 8px;
         color: #89694f;
         font-size: 13px;
       }
       .table-total {
-        margin-top: 8px;
-        font-size: 16px;
-        font-weight: 900;
+        margin-top: 12px;
+        font-size: 18px;
+        font-weight: 950;
         color: #7e4d23;
       }
       .menu-grid {
@@ -2408,11 +2469,20 @@ function StyleTag() {
       }
       .menu-card {
         border: 1px solid #e0cfba;
-        background: #fffdf9;
-        border-radius: 18px;
-        padding: 14px;
+        background: linear-gradient(180deg, #fffdf9 0%, #fffaf4 100%);
+        border-radius: 20px;
+        padding: 15px;
         text-align: left;
         cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+      }
+      .menu-card:hover {
+        transform: translateY(-2px);
+        border-color: #bb8b5b;
+        box-shadow: 0 14px 28px rgba(92, 58, 28, 0.10);
+      }
+      .menu-card:active {
+        transform: scale(0.985);
       }
       .menu-card:disabled {
         opacity: 0.55;
@@ -2436,6 +2506,8 @@ function StyleTag() {
       .order-panel {
         display: flex;
         flex-direction: column;
+        position: sticky;
+        top: 118px;
       }
       .order-total-top {
         font-size: 18px;
@@ -2655,6 +2727,8 @@ function StyleTag() {
 
       @media (max-width: 767px) {
         .app-shell { padding: 10px; }
+        .topbar { position: static; }
+        .order-panel { position: static; }
         .topbar {
           align-items: flex-start;
           flex-direction: column;
