@@ -35,6 +35,14 @@ const productSchema = new mongoose.Schema(
   }
 );
 
-const Product = mongoose.models.Product || mongoose.model('Product', productSchema);
+/**
+ * 🔥 FIX QUAN TRỌNG
+ * hỗ trợ cả:
+ * import Product
+ * import { Product }
+ */
+const Product =
+  mongoose.models.Product || mongoose.model('Product', productSchema);
 
+export { Product };
 export default Product;
