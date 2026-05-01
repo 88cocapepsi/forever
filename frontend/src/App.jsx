@@ -170,28 +170,13 @@ function buildTempSlipNumber(order) {
   return shortId || "000001";
 }
 
-function getTableNumber(table) {
-  const name = String(table?.name || "").trim().toLowerCase();
-  const match = name.match(/bàn\s*(\d+)|ban\s*(\d+)/i);
-  return match ? Number(match[1] || match[2]) : null;
-}
-
 function normalizeArea(table) {
-  const name = String(table?.name || "").trim().toLowerCase();
   const raw = String(table?.area || table?.zone || "").trim().toLowerCase();
-  const tableNumber = getTableNumber(table);
 
-  // PRO MAX layout cố định theo tên bàn:
-  // Sảnh trước: Bàn 1-6
-  // Sau công viên: Bàn 7-10
-  // Khác: Giao đi, Mang về
-  // VIP giữ nguyên
-  if (name.startsWith("vip") || raw === "vip") return "vip";
-  if (tableNumber >= 1 && tableNumber <= 6) return "front";
-  if (tableNumber >= 7 && tableNumber <= 10) return "back";
+  if (raw === "front" || raw === "sảnh trước" || raw === "sanh truoc") return "front";
+  if (raw === "back" || raw === "sau công viên" || raw === "sau cong vien") return "back";
+  if (raw === "vip") return "vip";
   if (
-    name.includes("giao") ||
-    name.includes("mang") ||
     raw === "other" ||
     raw === "khác" ||
     raw === "khac" ||
@@ -202,9 +187,6 @@ function normalizeArea(table) {
   ) {
     return "other";
   }
-
-  if (raw === "front" || raw === "sảnh trước" || raw === "sanh truoc") return "front";
-  if (raw === "back" || raw === "sau công viên" || raw === "sau cong vien") return "back";
 
   return "other";
 }
@@ -239,25 +221,6 @@ function normalizeIncomingTable(table) {
     area,
     zone: getZoneLabel({ ...table, area }),
   };
-}
-
-function getTableSortValue(table) {
-  const name = String(table?.name || "").trim().toLowerCase();
-  const number = getTableNumber(table);
-
-  if (number !== null) return number;
-  if (name.includes("giao")) return 1001;
-  if (name.includes("mang")) return 1002;
-  if (name.startsWith("vip")) {
-    const vipNumber = Number(name.replace(/[^0-9]/g, ""));
-    return Number.isFinite(vipNumber) && vipNumber > 0 ? 2000 + vipNumber : 2999;
-  }
-
-  return 9999;
-}
-
-function sortTablesByName(list) {
-  return [...list].sort((a, b) => getTableSortValue(a) - getTableSortValue(b));
 }
 
 export default function App() {
@@ -348,6 +311,19 @@ export default function App() {
     return showMoreHistory ? historyOrders : historyOrders.slice(0, 20);
   }, [historyOrders, showMoreHistory]);
 
+  // Tổng tiền các bàn đang phục vụ / chưa thanh toán.
+  const pendingRevenue = useMemo(() => {
+    return (tables || []).reduce((sum, table) => {
+      const order = table?.currentOrder;
+
+      if (order && typeof order === "object") {
+        return sum + Number(order.subtotal || order.total || 0);
+      }
+
+      return sum;
+    }, 0);
+  }, [tables]);
+
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
     window.addEventListener("resize", onResize);
@@ -382,7 +358,7 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedTableId || !token) return;
-    refreshCurrentOrderForTable(selectedTableId);
+    ensureCurrentOrder(selectedTableId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTableId, tables.length, token]);
 
@@ -1354,10 +1330,7 @@ export default function App() {
       <button
         key={normalizedTable._id}
         className={`table-card ${selected ? "selected" : ""} ${busy ? "busy" : ""}`}
-        onClick={async () => {
-          setSelectedTableId(normalizedTable._id);
-          await refreshCurrentOrderForTable(normalizedTable._id);
-        }}
+        onClick={() => setSelectedTableId(normalizedTable._id)}
       >
         <div className="table-name">{normalizedTable.name}</div>
         <div className="table-meta">{getZoneLabel(normalizedTable)}</div>
@@ -1370,10 +1343,10 @@ export default function App() {
   function renderTablesPanel() {
     const normalizedTables = tables.map((table) => normalizeIncomingTable(table));
 
-    const front = sortTablesByName(normalizedTables.filter((t) => t.area === "front"));
-    const back = sortTablesByName(normalizedTables.filter((t) => t.area === "back"));
-    const vip = sortTablesByName(normalizedTables.filter((t) => t.area === "vip"));
-    const other = sortTablesByName(normalizedTables.filter((t) => t.area === "other"));
+    const front = normalizedTables.filter((t) => t.area === "front");
+    const back = normalizedTables.filter((t) => t.area === "back");
+    const vip = normalizedTables.filter((t) => t.area === "vip");
+    const other = normalizedTables.filter((t) => t.area === "other");
 
     return (
       <div className="panel">
@@ -1985,6 +1958,10 @@ export default function App() {
             <div className="stat-value">{formatMoney(reportSummary?.todayRevenue)}</div>
           </div>
           <div className="stat-card">
+            <div className="stat-label">Doanh thu chờ</div>
+            <div className="stat-value">{formatMoney(pendingRevenue)}</div>
+          </div>
+          <div className="stat-card">
             <div className="stat-label">Doanh thu tháng</div>
             <div className="stat-value">{formatMoney(reportSummary?.monthRevenue)}</div>
           </div>
@@ -2591,7 +2568,7 @@ function StyleTag() {
       }
       .stats-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
+        grid-template-columns: repeat(5, minmax(0, 1fr));
         gap: 12px;
         margin-top: 14px;
         margin-bottom: 14px;
