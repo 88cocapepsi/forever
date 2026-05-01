@@ -29,6 +29,25 @@ function safeUser(user) {
   };
 }
 
+export async function ensureDefaultAdmin() {
+  const adminUsername = process.env.DEFAULT_ADMIN_USERNAME || "admin";
+  const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || "123456";
+
+  const existing = await User.findOne({ username: adminUsername.toLowerCase() });
+
+  if (!existing) {
+    await User.create({
+      name: "Admin",
+      username: adminUsername.toLowerCase(),
+      password: adminPassword,
+      role: "admin",
+      isActive: true,
+    });
+
+    console.log(`✅ Default admin created: ${adminUsername}`);
+  }
+}
+
 router.post("/login", async (req, res) => {
   try {
     const username = String(req.body.username || "").trim().toLowerCase();
