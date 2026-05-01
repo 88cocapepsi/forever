@@ -567,7 +567,9 @@ export default function App() {
       setCurrentOrder(order);
       await syncAll();
       return order;
-    } catch {
+    } catch (err) {
+      console.error("❌ OPEN ORDER ERROR:", err);
+      setError(err.message || "Không mở được đơn cho bàn này");
       const fallbackOrder = {
         items: [],
         subtotal: 0,
@@ -581,11 +583,29 @@ export default function App() {
 
   async function addProductToOrder(product) {
     try {
-      let order = currentOrder;
-      if (!order?._id) {
-        order = await ensureCurrentOrder(selectedTableId);
-        if (!order?._id) return;
+      if (!selectedTableId) {
+        setToast("Chọn bàn trước");
+        return;
       }
+
+      if (!product?._id) {
+        setToast("Món không hợp lệ");
+        return;
+      }
+
+      setError("");
+      console.log("🟢 CLICK ADD PRODUCT:", product);
+
+      // Luôn gọi ensureCurrentOrder để chắc chắn có order thật từ backend.
+      const order = await ensureCurrentOrder(selectedTableId);
+
+      if (!order?._id) {
+        setToast("Không tạo được đơn cho bàn này");
+        console.warn("⚠️ Không có order._id sau ensureCurrentOrder", order);
+        return;
+      }
+
+      console.log("🟢 ORDER ID:", order._id);
 
       const nextOrder = await api(
         `/api/orders/${order._id}/items`,
@@ -599,9 +619,13 @@ export default function App() {
         token
       );
 
+      console.log("✅ ADD ITEM SUCCESS:", nextOrder);
+
       setCurrentOrder(nextOrder);
+      setToast(`Đã thêm ${product.name || "món"}`);
       await syncAll();
     } catch (err) {
+      console.error("❌ ADD PRODUCT ERROR:", err);
       setError(err.message || "Không thêm món được");
     }
   }
@@ -1334,7 +1358,11 @@ export default function App() {
             <button
               key={item._id}
               className="menu-card"
-              onClick={() => addProductToOrder(item)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                addProductToOrder(item);
+              }}
               disabled={Number(item.stock || 0) <= 0}
             >
               <div className="menu-card-name">{item.name}</div>
