@@ -24,4 +24,12 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export const Order = mongoose.model('Order', orderSchema);
+/**
+ * 🔥 FIX QUAN TRỌNG
+ * Vừa export named, vừa export default
+ * → tương thích 100% mọi file import
+ */
+const Order = mongoose.model('Order', orderSchema);
+
+export { Order };
+export default Order;
