@@ -97,7 +97,14 @@ function formatMoneyPlain(value) {
 function getTableOrderId(table) {
   if (!table?.currentOrder) return null;
   if (typeof table.currentOrder === "string") return table.currentOrder;
-  return table.currentOrder?._id || null;
+
+  // Dữ liệu cũ có thể lưu currentOrder là object giả không có _id.
+  // Trường hợp đó không phải order thật, không được dùng để thêm món.
+  if (typeof table.currentOrder === "object") {
+    return table.currentOrder?._id || null;
+  }
+
+  return null;
 }
 
 function getOrderTotal(order) {
@@ -526,58 +533,102 @@ export default function App() {
         return null;
       }
 
-      if (table.currentOrder && typeof table.currentOrder === "object") {
+      // Chỉ nhận currentOrder object khi có _id thật.
+      // Object không có _id là dữ liệu cũ/fallback và phải bỏ qua.
+      if (table.currentOrder && typeof table.currentOrder === "object" && table.currentOrder._id) {
         if (tableId === selectedTableId) setCurrentOrder(table.currentOrder);
         return table.currentOrder;
       }
 
       const orderId = getTableOrderId(table);
       if (!orderId) {
-        setCurrentOrder(null);
+        if (tableId === selectedTableId) setCurrentOrder(null);
         return null;
       }
 
       const order = await api(`/api/orders/${orderId}`, {}, token);
       if (tableId === selectedTableId) setCurrentOrder(order);
       return order;
-    } catch {
+    } catch (err) {
+      console.error("❌ REFRESH ORDER ERROR:", err);
       if (tableId === selectedTableId) setCurrentOrder(null);
       return null;
     }
   }
 
   async function ensureCurrentOrder(tableId) {
-    if (!tableId) return null;
+    if (!tableId) {
+      setToast("Chọn bàn trước");
+      return null;
+    }
 
     const table = tables.find((t) => t._id === tableId);
-    if (!table) return null;
+    if (!table) {
+      setToast("Không tìm thấy bàn");
+      return null;
+    }
 
-    if (table.currentOrder && typeof table.currentOrder === "object") {
+    // Nếu state hiện tại đã có order thật thì dùng luôn.
+    if (currentOrder?._id) {
+      return currentOrder;
+    }
+
+    // Chỉ dùng currentOrder object khi có _id thật.
+    // Object không có _id là dữ liệu cũ/fallback và sẽ làm click món bị kẹt.
+    if (table.currentOrder && typeof table.currentOrder === "object" && table.currentOrder._id) {
       setCurrentOrder(table.currentOrder);
       return table.currentOrder;
     }
 
     const existingOrderId = getTableOrderId(table);
     if (existingOrderId) {
-      return refreshCurrentOrderForTable(tableId);
+      const existingOrder = await refreshCurrentOrderForTable(tableId);
+      if (existingOrder?._id) return existingOrder;
     }
 
-    try {
+    const openOrderOnce = async () => {
+      console.log("🟢 OPEN ORDER FOR TABLE:", tableId);
       const order = await api(`/api/orders/table/${tableId}/open`, { method: "POST" }, token);
+
+      if (!order?._id) {
+        throw new Error("Backend trả về order nhưng thiếu _id");
+      }
+
+      console.log("✅ OPEN ORDER SUCCESS:", order);
       setCurrentOrder(order);
+      return order;
+    };
+
+    try {
+      const order = await openOrderOnce();
       await syncAll();
       return order;
     } catch (err) {
-      console.error("❌ OPEN ORDER ERROR:", err);
-      setError(err.message || "Không mở được đơn cho bàn này");
-      const fallbackOrder = {
-        items: [],
-        subtotal: 0,
-        discount: 0,
-        total: 0,
-      };
-      setCurrentOrder(fallbackOrder);
-      return fallbackOrder;
+      console.error("❌ OPEN ORDER FIRST TRY ERROR:", err);
+
+      // Tự sửa dữ liệu bàn cũ: nhiều bàn đang có currentOrder object giả không có _id.
+      // Reset currentOrder về null rồi mở lại order thật.
+      try {
+        console.warn("⚠️ Đang reset currentOrder cũ của bàn rồi mở lại order:", tableId);
+        await api(
+          `/api/tables/${tableId}`,
+          {
+            method: "PUT",
+            body: JSON.stringify({ currentOrder: null, status: "empty" }),
+          },
+          token
+        );
+
+        const order = await openOrderOnce();
+        await syncAll();
+        return order;
+      } catch (err2) {
+        console.error("❌ OPEN ORDER FINAL ERROR:", err2);
+        setCurrentOrder(null);
+        setError(err2.message || "Không mở được đơn cho bàn này");
+        setToast("Không mở được đơn cho bàn này");
+        return null;
+      }
     }
   }
 
@@ -596,10 +647,12 @@ export default function App() {
       setError("");
       console.log("🟢 CLICK ADD PRODUCT:", product);
 
-      // Luôn gọi ensureCurrentOrder để chắc chắn có order thật từ backend.
+      // Luôn mở/lấy order thật từ backend. Không dùng fallback object không có _id.
       const order = await ensureCurrentOrder(selectedTableId);
 
       if (!order?._id) {
+        const msg = "Không tạo được đơn thật cho bàn này. Kiểm tra backend route POST /api/orders/table/:tableId/open.";
+        setError(msg);
         setToast("Không tạo được đơn cho bàn này");
         console.warn("⚠️ Không có order._id sau ensureCurrentOrder", order);
         return;
