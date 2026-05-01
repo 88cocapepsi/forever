@@ -6,6 +6,10 @@ const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || "forever-pos-secret";
 
+/* =========================
+   UTILS
+========================= */
+
 function signToken(user) {
   return jwt.sign(
     {
@@ -29,12 +33,19 @@ function safeUser(user) {
   };
 }
 
+/* =========================
+   FIX ADMIN AUTO
+========================= */
+
 export async function ensureDefaultAdmin() {
   const adminUsername = process.env.DEFAULT_ADMIN_USERNAME || "admin";
   const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || "123456";
 
-  const existing = await User.findOne({ username: adminUsername.toLowerCase() });
+  let existing = await User.findOne({
+    username: adminUsername.toLowerCase(),
+  });
 
+  // ✅ chưa có → tạo mới
   if (!existing) {
     await User.create({
       name: "Admin",
@@ -44,9 +55,25 @@ export async function ensureDefaultAdmin() {
       isActive: true,
     });
 
-    console.log(`✅ Default admin created: ${adminUsername}`);
+    console.log("✅ Admin created");
+    return;
+  }
+
+  // ✅ có nhưng bị lỗi password null
+  if (!existing.password) {
+    existing.password = adminPassword;
+    existing.role = existing.role || "admin";
+    existing.isActive = true;
+
+    await existing.save();
+
+    console.log("✅ Admin password repaired");
   }
 }
+
+/* =========================
+   LOGIN
+========================= */
 
 router.post("/login", async (req, res) => {
   try {
@@ -56,17 +83,30 @@ router.post("/login", async (req, res) => {
     const user = await User.findOne({ username });
 
     if (!user) {
-      return res.status(401).json({ message: "Sai tài khoản hoặc mật khẩu" });
+      return res.status(401).json({
+        message: "Sai tài khoản hoặc mật khẩu",
+      });
     }
 
     if (user.isActive === false) {
-      return res.status(403).json({ message: "Tài khoản đã bị khóa" });
+      return res.status(403).json({
+        message: "Tài khoản đã bị khóa",
+      });
+    }
+
+    // ✅ FIX crash bcrypt
+    if (!user.password) {
+      return res.status(500).json({
+        message: "User chưa có password (DB lỗi). Backend đang tự sửa, hãy reload lại.",
+      });
     }
 
     const ok = await user.comparePassword(password);
 
     if (!ok) {
-      return res.status(401).json({ message: "Sai tài khoản hoặc mật khẩu" });
+      return res.status(401).json({
+        message: "Sai tài khoản hoặc mật khẩu",
+      });
     }
 
     res.json({
@@ -74,16 +114,28 @@ router.post("/login", async (req, res) => {
       user: safeUser(user),
     });
   } catch (err) {
-    res.status(500).json({ message: err.message || "Lỗi đăng nhập" });
+    console.error("LOGIN ERROR:", err);
+    res.status(500).json({
+      message: err.message || "Lỗi đăng nhập",
+    });
   }
 });
 
+/* =========================
+   USERS
+========================= */
+
 router.get("/users", async (req, res) => {
   try {
-    const users = await User.find().sort({ createdAt: -1 }).select("-password");
+    const users = await User.find()
+      .sort({ createdAt: -1 })
+      .select("-password");
+
     res.json(users);
   } catch (err) {
-    res.status(500).json({ message: err.message || "Không lấy được danh sách tài khoản" });
+    res.status(500).json({
+      message: err.message || "Không lấy được danh sách",
+    });
   }
 });
 
@@ -98,21 +150,30 @@ router.post("/users", async (req, res) => {
     };
 
     if (!payload.username || !payload.password) {
-      return res.status(400).json({ message: "Thiếu tài khoản hoặc mật khẩu" });
+      return res.status(400).json({
+        message: "Thiếu tài khoản hoặc mật khẩu",
+      });
     }
 
-    const exists = await User.findOne({ username: payload.username });
+    const exists = await User.findOne({
+      username: payload.username,
+    });
 
     if (exists) {
-      return res.status(409).json({ message: "Tài khoản đã tồn tại" });
+      return res.status(409).json({
+        message: "Tài khoản đã tồn tại",
+      });
     }
 
     const user = await User.create(payload);
+
     const result = await User.findById(user._id).select("-password");
 
     res.json(result);
   } catch (err) {
-    res.status(500).json({ message: err.message || "Không tạo được tài khoản" });
+    res.status(500).json({
+      message: err.message || "Không tạo được user",
+    });
   }
 });
 
