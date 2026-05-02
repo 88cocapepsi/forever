@@ -107,6 +107,16 @@ function getTableOrderId(table) {
   return null;
 }
 
+function getOrderTableId(order) {
+  if (!order?.table) return "";
+  if (typeof order.table === "string") return order.table;
+  return order.table?._id || "";
+}
+
+function isOrderForTable(order, tableId) {
+  return !!order?._id && String(getOrderTableId(order)) === String(tableId);
+}
+
 function getOrderTotal(order) {
   return Number(order?.subtotal || 0);
 }
@@ -221,6 +231,27 @@ function normalizeIncomingTable(table) {
     area,
     zone: getZoneLabel({ ...table, area }),
   };
+}
+
+function getTableNumber(table) {
+  const match = String(table?.name || "").match(/\d+/);
+  return match ? Number(match[0]) : 9999;
+}
+
+function sortByTableNumber(list) {
+  return [...list].sort((a, b) => getTableNumber(a) - getTableNumber(b));
+}
+
+function isTableNumberBetween(table, min, max) {
+  const name = String(table?.name || "").toLowerCase();
+  if (!name.includes("bàn") && !name.includes("ban")) return false;
+  const number = getTableNumber(table);
+  return number >= min && number <= max;
+}
+
+function isTakeawayOrDelivery(table) {
+  const name = String(table?.name || "").toLowerCase();
+  return name.includes("giao") || name.includes("mang");
 }
 
 export default function App() {
@@ -358,7 +389,7 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedTableId || !token) return;
-    ensureCurrentOrder(selectedTableId);
+    refreshCurrentOrderForTable(selectedTableId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTableId, tables.length, token]);
 
@@ -540,31 +571,31 @@ export default function App() {
 
   async function refreshCurrentOrderForTable(tableId, tableList = tables) {
     try {
-      const table = (tableList || []).find((t) => t._id === tableId);
+      const table = (tableList || tables || []).find((t) => String(t._id) === String(tableId));
+
       if (!table) {
         setCurrentOrder(null);
         return null;
       }
 
-      // Chỉ nhận currentOrder object khi có _id thật.
-      // Object không có _id là dữ liệu cũ/fallback và phải bỏ qua.
       if (table.currentOrder && typeof table.currentOrder === "object" && table.currentOrder._id) {
-        if (tableId === selectedTableId) setCurrentOrder(table.currentOrder);
+        setCurrentOrder(table.currentOrder);
         return table.currentOrder;
       }
 
       const orderId = getTableOrderId(table);
+
       if (!orderId) {
-        if (tableId === selectedTableId) setCurrentOrder(null);
+        setCurrentOrder(null);
         return null;
       }
 
       const order = await api(`/api/orders/${orderId}`, {}, token);
-      if (tableId === selectedTableId) setCurrentOrder(order);
+      setCurrentOrder(order);
       return order;
     } catch (err) {
       console.error("❌ REFRESH ORDER ERROR:", err);
-      if (tableId === selectedTableId) setCurrentOrder(null);
+      setCurrentOrder(null);
       return null;
     }
   }
@@ -581,8 +612,9 @@ export default function App() {
       return null;
     }
 
-    // Nếu state hiện tại đã có order thật thì dùng luôn.
-    if (currentOrder?._id) {
+    // Chỉ dùng currentOrder hiện tại khi đúng bàn đang chọn.
+    // Tránh lỗi bàn A có order nhưng click sang bàn B vẫn giữ đơn cũ.
+    if (isOrderForTable(currentOrder, tableId)) {
       return currentOrder;
     }
 
@@ -1330,7 +1362,11 @@ export default function App() {
       <button
         key={normalizedTable._id}
         className={`table-card ${selected ? "selected" : ""} ${busy ? "busy" : ""}`}
-        onClick={() => setSelectedTableId(normalizedTable._id)}
+        onClick={async () => {
+          setSelectedTableId(normalizedTable._id);
+          setCurrentOrder(null);
+          await refreshCurrentOrderForTable(normalizedTable._id);
+        }}
       >
         <div className="table-name">{normalizedTable.name}</div>
         <div className="table-meta">{getZoneLabel(normalizedTable)}</div>
@@ -1343,10 +1379,10 @@ export default function App() {
   function renderTablesPanel() {
     const normalizedTables = tables.map((table) => normalizeIncomingTable(table));
 
-    const front = normalizedTables.filter((t) => t.area === "front");
-    const back = normalizedTables.filter((t) => t.area === "back");
-    const vip = normalizedTables.filter((t) => t.area === "vip");
-    const other = normalizedTables.filter((t) => t.area === "other");
+    const front = sortByTableNumber(normalizedTables.filter((t) => isTableNumberBetween(t, 1, 6)));
+    const back = sortByTableNumber(normalizedTables.filter((t) => isTableNumberBetween(t, 7, 10)));
+    const vip = sortByTableNumber(normalizedTables.filter((t) => t.area === "vip"));
+    const other = normalizedTables.filter((t) => isTakeawayOrDelivery(t));
 
     return (
       <div className="panel">
