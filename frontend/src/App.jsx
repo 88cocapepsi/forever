@@ -107,6 +107,12 @@ function getTableOrderId(table) {
   return null;
 }
 
+function getOrderItemProductId(item) {
+  if (!item?.product) return "";
+  if (typeof item.product === "string") return item.product;
+  return item.product?._id || "";
+}
+
 function getOrderTableId(order) {
   if (!order?.table) return "";
   if (typeof order.table === "string") return order.table;
@@ -306,6 +312,8 @@ export default function App() {
   const [userForm, setUserForm] = useState(emptyUserForm());
 
   const [showMoreHistory, setShowMoreHistory] = useState(false);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitItems, setSplitItems] = useState({});
   const syncTimerRef = useRef(null);
   const lastSeenNotificationIdRef = useRef(null);
 
@@ -745,6 +753,150 @@ export default function App() {
       await syncAll();
     } catch (err) {
       setError(err.message || "Không cập nhật món được");
+    }
+  }
+
+  function updateSplitItem(item, nextQty) {
+    const productId = getOrderItemProductId(item);
+    if (!productId) return;
+
+    const maxQty = Number(item.quantity || 0);
+    const safeQty = Math.max(0, Math.min(Number(nextQty || 0), maxQty));
+
+    setSplitItems((prev) => ({
+      ...prev,
+      [productId]: safeQty,
+    }));
+  }
+
+  function buildSplitOrder() {
+    const items = (currentOrder?.items || [])
+      .map((item) => {
+        const productId = getOrderItemProductId(item);
+        const qty = Number(splitItems[productId] || 0);
+
+        if (qty <= 0) return null;
+
+        return {
+          ...item,
+          product: productId,
+          quantity: qty,
+        };
+      })
+      .filter(Boolean);
+
+    const subtotal = items.reduce(
+      (sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 0),
+      0
+    );
+
+    return {
+      ...currentOrder,
+      _id: currentOrder?._id ? `${currentOrder._id}-split` : "split-bill",
+      items,
+      subtotal,
+      total: subtotal,
+      paidAt: new Date().toISOString(),
+    };
+  }
+
+  function getSplitTotal() {
+    return buildSplitOrder().subtotal || 0;
+  }
+
+  function resetSplitBill() {
+    setSplitMode(false);
+    setSplitItems({});
+  }
+
+  function printSplitBill() {
+    const splitOrder = buildSplitOrder();
+
+    if (!splitOrder.items.length) {
+      setToast("Chọn món cần tách bill");
+      return;
+    }
+
+    printBill(
+      splitOrder,
+      `${selectedTable?.name || "Bàn"} - Tách bill`,
+      user?.name || "admin",
+      true
+    );
+
+    setToast("Đã in bill tách");
+  }
+
+  async function paySplitBill() {
+    try {
+      if (!currentOrder?._id) {
+        setToast("Chưa có đơn để tách bill");
+        return;
+      }
+
+      const splitOrder = buildSplitOrder();
+
+      if (!splitOrder.items.length) {
+        setToast("Chọn món cần thanh toán");
+        return;
+      }
+
+      printBill(
+        splitOrder,
+        `${selectedTable?.name || "Bàn"} - Tách bill`,
+        user?.name || "admin",
+        false
+      );
+
+      let latestOrder = currentOrder;
+
+      for (const splitItem of splitOrder.items) {
+        const originalItem = (latestOrder.items || []).find(
+          (item) => String(getOrderItemProductId(item)) === String(splitItem.product)
+        );
+
+        if (!originalItem) continue;
+
+        const nextQty = Math.max(
+          0,
+          Number(originalItem.quantity || 0) - Number(splitItem.quantity || 0)
+        );
+
+        latestOrder = await api(
+          `/api/orders/${currentOrder._id}/items/${splitItem.product}`,
+          {
+            method: "PUT",
+            body: JSON.stringify({ quantity: nextQty }),
+          },
+          token
+        );
+      }
+
+      setCurrentOrder(latestOrder);
+      resetSplitBill();
+
+      try {
+        await createNotification({
+          type: "payment",
+          title: "Thanh toán tách bill",
+          message: `${selectedTable?.name || "Bàn"} đã thanh toán tách bill ${formatMoney(splitOrder.subtotal)}`,
+          level: "success",
+          meta: {
+            tableName: selectedTable?.name || "Bàn",
+            total: Number(splitOrder.subtotal || 0),
+            split: true,
+          },
+        });
+      } catch {
+        // ignore notification error
+      }
+
+      await syncAll();
+      await refreshCurrentOrderForTable(selectedTableId);
+      setToast("Đã thanh toán phần tách bill");
+    } catch (err) {
+      console.error("❌ PAY SPLIT BILL ERROR:", err);
+      setError(err.message || "Không thanh toán được bill tách");
     }
   }
 
@@ -1480,6 +1632,8 @@ export default function App() {
   }
 
   function renderOrderPanel() {
+    const splitTotal = splitMode ? getSplitTotal() : 0;
+
     return (
       <div className="panel order-panel">
         <div className="panel-head">
@@ -1492,34 +1646,64 @@ export default function App() {
 
         <div className="order-list">
           {(currentOrder?.items || []).length ? (
-            currentOrder.items.map((item) => (
-              <div key={item.product} className="order-row">
-                <div className="order-main">
-                  <div className="order-name">{item.name}</div>
-                  <div className="order-price">{formatMoney(item.price)}</div>
-                </div>
+            currentOrder.items.map((item) => {
+              const productId = getOrderItemProductId(item);
+              const selectedSplitQty = Number(splitItems[productId] || 0);
 
-                <div className="qty-box">
-                  <button
-                    className="qty-btn"
-                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || 0) - 1)}
-                  >
-                    -
-                  </button>
-                  <span className="qty-num">{item.quantity}</span>
-                  <button
-                    className="qty-btn"
-                    onClick={() => updateOrderItemQuantity(item, Number(item.quantity || 0) + 1)}
-                  >
-                    +
-                  </button>
-                </div>
+              return (
+                <div key={productId || item.name} className={`order-row ${splitMode ? "split-active-row" : ""}`}>
+                  <div className="order-main">
+                    <div className="order-name">{item.name}</div>
+                    <div className="order-price">{formatMoney(item.price)}</div>
+                    {splitMode && (
+                      <div className="split-hint">
+                        Tách: {selectedSplitQty}/{Number(item.quantity || 0)} • {formatMoney(Number(item.price || 0) * selectedSplitQty)}
+                      </div>
+                    )}
+                  </div>
 
-                <div className="order-line-total">
-                  {formatMoney(Number(item.price || 0) * Number(item.quantity || 0))}
+                  {!splitMode && (
+                    <div className="qty-box">
+                      <button
+                        className="qty-btn"
+                        onClick={() => updateOrderItemQuantity(item, Number(item.quantity || 0) - 1)}
+                      >
+                        -
+                      </button>
+                      <span className="qty-num">{item.quantity}</span>
+                      <button
+                        className="qty-btn"
+                        onClick={() => updateOrderItemQuantity(item, Number(item.quantity || 0) + 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
+
+                  {splitMode && (
+                    <div className="qty-box split-qty-box">
+                      <button
+                        className="qty-btn"
+                        onClick={() => updateSplitItem(item, selectedSplitQty - 1)}
+                      >
+                        -
+                      </button>
+                      <span className="qty-num">{selectedSplitQty}</span>
+                      <button
+                        className="qty-btn"
+                        onClick={() => updateSplitItem(item, selectedSplitQty + 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="order-line-total">
+                    {formatMoney(Number(item.price || 0) * Number(item.quantity || 0))}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <div className="empty-box">Chưa có món trong đơn</div>
           )}
@@ -1534,7 +1718,29 @@ export default function App() {
             <span>Tổng tiền</span>
             <strong>{formatMoney(getOrderTotal(currentOrder))}</strong>
           </div>
+          {splitMode && (
+            <>
+              <div className="summary-row split-total-row">
+                <span>Bill đang tách</span>
+                <strong>{formatMoney(splitTotal)}</strong>
+              </div>
+              <div className="split-note">
+                Chọn số lượng món khách muốn thanh toán trước. In bill tách không làm thay đổi đơn; thanh toán phần này sẽ trừ món khỏi bàn.
+              </div>
+            </>
+          )}
         </div>
+
+        {splitMode && (
+          <div className="split-actions">
+            <button className="btn" onClick={printSplitBill}>
+              In bill tách
+            </button>
+            <button className="btn btn-primary" onClick={paySplitBill}>
+              Thanh toán phần này & trừ khỏi bàn
+            </button>
+          </div>
+        )}
 
         <div className="sticky-actions">
           <button
@@ -1545,6 +1751,16 @@ export default function App() {
             }}
           >
             In bill tạm
+          </button>
+          <button
+            className="btn"
+            onClick={() => {
+              setSplitMode((prev) => !prev);
+              setSplitItems({});
+            }}
+            disabled={!currentOrder?.items?.length}
+          >
+            {splitMode ? "Đóng tách bill" : "Tách bill"}
           </button>
           <button className="btn btn-primary" onClick={payCurrentOrder}>
             Thanh toán
@@ -2568,7 +2784,41 @@ function StyleTag() {
       }
       .sticky-actions {
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .split-active-row {
+        border-color: #c69b67;
+        background: #fff8ed;
+      }
+      .split-hint {
+        margin-top: 6px;
+        color: #9a632e;
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .split-qty-box {
+        background: #f8ead8;
+        border-radius: 14px;
+        padding: 6px;
+      }
+      .split-total-row {
+        margin-top: 8px;
+        padding-top: 10px;
+        border-top: 1px dashed #d7c2ab;
+        color: #7a4920;
+      }
+      .split-note {
+        margin-top: 8px;
+        color: #8c6b4b;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .split-actions {
+        display: grid;
+        grid-template-columns: 1fr 1.4fr;
         gap: 8px;
         margin-top: 12px;
       }
