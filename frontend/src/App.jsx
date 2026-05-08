@@ -260,6 +260,27 @@ function isTakeawayOrDelivery(table) {
   return name.includes("giao") || name.includes("mang");
 }
 
+function getDateKey(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function getTodayDateKey() {
+  return getDateKey(new Date());
+}
+
+function formatDateVN(dateKey) {
+  if (!dateKey) return "";
+  const [y, m, d] = String(dateKey).split("-");
+  if (!y || !m || !d) return dateKey;
+  return `${d}/${m}/${y}`;
+}
+
 export default function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < MOBILE_BREAKPOINT);
 
@@ -312,6 +333,7 @@ export default function App() {
   const [userForm, setUserForm] = useState(emptyUserForm());
 
   const [showMoreHistory, setShowMoreHistory] = useState(false);
+  const [reportDate, setReportDate] = useState(getTodayDateKey());
   const [splitMode, setSplitMode] = useState(false);
   const [splitItems, setSplitItems] = useState({});
   const syncTimerRef = useRef(null);
@@ -362,6 +384,31 @@ export default function App() {
       return sum;
     }, 0);
   }, [tables]);
+
+  // Doanh thu theo ngày được tính từ lịch sử đơn đã thanh toán.
+  const selectedDayOrders = useMemo(() => {
+    return (historyOrders || []).filter((order) => getDateKey(order?.paidAt || order?.updatedAt || order?.createdAt) === reportDate);
+  }, [historyOrders, reportDate]);
+
+  const selectedDayRevenue = useMemo(() => {
+    return selectedDayOrders.reduce((sum, order) => sum + Number(order?.subtotal || order?.total || 0), 0);
+  }, [selectedDayOrders]);
+
+  const revenueHistoryByDay = useMemo(() => {
+    const map = new Map();
+
+    (historyOrders || []).forEach((order) => {
+      const key = getDateKey(order?.paidAt || order?.updatedAt || order?.createdAt);
+      if (!key) return;
+
+      const current = map.get(key) || { date: key, revenue: 0, orders: 0 };
+      current.revenue += Number(order?.subtotal || order?.total || 0);
+      current.orders += 1;
+      map.set(key, current);
+    });
+
+    return Array.from(map.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }, [historyOrders]);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
@@ -510,7 +557,7 @@ export default function App() {
       const tasks = [
         api("/api/tables", {}, token),
         api("/api/products", {}, token),
-        api("/api/orders/history?limit=100", {}, token),
+        api("/api/orders/history?limit=500", {}, token),
         api("/api/reports/summary", {}, token),
         api("/api/warehouse", {}, token),
         api("/api/notifications?limit=100", {}, token),
@@ -2202,7 +2249,20 @@ export default function App() {
   function renderReports() {
     return (
       <div className="panel">
-        <div className="panel-title">Báo cáo</div>
+        <div className="panel-head stack-mobile">
+          <div>
+            <div className="panel-title">Báo cáo</div>
+            <div className="panel-sub">Xem doanh thu hôm nay, doanh thu chờ và lịch sử doanh thu theo ngày</div>
+          </div>
+          <div className="panel-tools">
+            <input
+              className="input small"
+              type="date"
+              value={reportDate}
+              onChange={(e) => setReportDate(e.target.value)}
+            />
+          </div>
+        </div>
 
         <div className="stats-grid">
           <div className="stat-card">
@@ -2212,6 +2272,11 @@ export default function App() {
           <div className="stat-card">
             <div className="stat-label">Doanh thu chờ</div>
             <div className="stat-value">{formatMoney(pendingRevenue)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Doanh thu ngày {formatDateVN(reportDate)}</div>
+            <div className="stat-value">{formatMoney(selectedDayRevenue)}</div>
+            <div className="stat-sub">{selectedDayOrders.length} đơn</div>
           </div>
           <div className="stat-card">
             <div className="stat-label">Doanh thu tháng</div>
@@ -2224,6 +2289,58 @@ export default function App() {
           <div className="stat-card">
             <div className="stat-label">Số đơn hôm nay</div>
             <div className="stat-value">{reportSummary?.todayOrders || 0}</div>
+          </div>
+        </div>
+
+        <div className="admin-grid">
+          <div className="panel inner">
+            <div className="panel-head stack-mobile">
+              <div>
+                <div className="panel-title small-title">Lịch sử doanh thu theo ngày</div>
+                <div className="panel-sub">Tổng hợp từ các đơn đã thanh toán gần nhất</div>
+              </div>
+            </div>
+            <div className="list-table">
+              {revenueHistoryByDay.length ? (
+                revenueHistoryByDay.map((day) => (
+                  <div key={day.date} className="list-row">
+                    <div>
+                      <div className="list-name">{formatDateVN(day.date)}</div>
+                      <div className="list-sub">{day.orders} đơn đã thanh toán</div>
+                    </div>
+                    <div className="list-name">{formatMoney(day.revenue)}</div>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-box">Chưa có lịch sử doanh thu ngày cũ</div>
+              )}
+            </div>
+          </div>
+
+          <div className="panel inner">
+            <div className="panel-title small-title">Chi tiết ngày {formatDateVN(reportDate)}</div>
+            <div className="list-table">
+              {selectedDayOrders.length ? (
+                selectedDayOrders.map((order) => (
+                  <div key={order._id} className="list-row">
+                    <div>
+                      <div className="list-name">{formatMoney(order.subtotal || order.total)}</div>
+                      <div className="list-sub">{new Date(order.paidAt || order.updatedAt || order.createdAt).toLocaleString("vi-VN")}</div>
+                    </div>
+                    <button
+                      className="btn small"
+                      onClick={() =>
+                        printBill(order, order?.tableName || "Đã thanh toán", user?.name || "admin", false)
+                      }
+                    >
+                      In lại
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-box">Ngày này chưa có đơn đã thanh toán</div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -2874,6 +2991,11 @@ function StyleTag() {
         font-size: 22px;
         font-weight: 900;
         color: #72441e;
+      }
+      .stat-sub {
+        margin-top: 5px;
+        color: #8b6a4d;
+        font-size: 12px;
       }
       .mobile-bottom-nav {
         position: fixed;
