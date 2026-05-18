@@ -4,7 +4,7 @@ const API_URL = "https://forever-pos.onrender.com";
 
 const STORE_INFO = {
   name: "FOREVER COFFEE & BEER",
-  address1: "B38 đường 4A",
+  address1: "B48 đường 4A",
   address2: "P. Tân Hưng, Q.7",
   phone: "0788880891",
 };
@@ -335,6 +335,7 @@ export default function App() {
   });
 
   const [inventoryForm, setInventoryForm] = useState({
+    id: "",
     name: "",
     unit: "",
     qty: "",
@@ -901,60 +902,59 @@ export default function App() {
     pushNotification("Đã xóa nguyên liệu khỏi công thức", "info");
   };
 
-  const handleImportStock = (e) => {
+  const handleSaveInventory = (e) => {
     e.preventDefault();
-
     const qty = Number(inventoryForm.qty || 0);
     const cost = Number(inventoryForm.cost || 0);
     const name = (inventoryForm.name || "").trim();
     const unit = (inventoryForm.unit || "").trim();
 
-    if (!name) {
-      pushNotification("Vui lòng nhập tên hàng", "warning");
+    if (!name || !unit) {
+      pushNotification("Vui lòng điền đủ tên và đơn vị tính", "warning");
       return;
     }
 
-    if (!unit) {
-      pushNotification("Vui lòng nhập đơn vị tính", "warning");
-      return;
-    }
-
-    if (qty <= 0) {
-      pushNotification("Vui lòng nhập số lượng hợp lệ", "warning");
-      return;
-    }
-
-    const existing = inventory.find(
-      (item) => item.name.toLowerCase() === name.toLowerCase()
-    );
-
-    if (existing) {
+    if (inventoryForm.id) {
+      const oldItem = inventory.find((x) => x.id === inventoryForm.id);
       setInventory((prev) =>
         prev.map((item) =>
-          item.id === existing.id
-            ? {
-                ...item,
-                stock: Number(item.stock) + qty,
-                cost: cost > 0 ? cost : item.cost,
-                unit,
-              }
+          item.id === inventoryForm.id
+            ? { ...item, name, unit, stock: qty, cost }
             : item
         )
       );
 
+      if (oldItem && oldItem.name !== name) {
+        setMenuItems((prevMenu) =>
+          prevMenu.map((menuItem) => ({
+            ...menuItem,
+            recipe: (menuItem.recipe || []).map((rec) =>
+              rec.inventoryId === oldItem.id ? { ...rec, name, unit } : rec
+            ),
+          }))
+        );
+      }
+
       setStockLogs((prev) => [
         {
           id: uid("stock"),
-          type: "import",
-          note: `Nhập thêm hàng: ${name}`,
+          type: "edit_direct",
+          note: `Sửa trực tiếp thông tin/tồn kho: ${name}`,
           createdAt: new Date().toISOString(),
-          items: [{ sku: existing.sku, qty, cost }],
+          items: [{ sku: oldItem?.sku || "unknown", qty, cost }],
         },
         ...prev,
       ]);
-
-      pushNotification(`Đã nhập thêm ${name}`, "success");
+      pushNotification(`Đã cập nhật hàng ${name}`, "success");
     } else {
+      const existing = inventory.find(
+        (item) => item.name.toLowerCase() === name.toLowerCase()
+      );
+      if (existing) {
+        pushNotification("Tên hàng đã tồn tại. Hãy chọn Sửa ở danh sách bên cạnh.", "warning");
+        return;
+      }
+
       const newItem = {
         id: uid("inv"),
         sku: uid("sku"),
@@ -963,28 +963,30 @@ export default function App() {
         unit,
         cost,
       };
-
       setInventory((prev) => [newItem, ...prev]);
-
       setStockLogs((prev) => [
         {
           id: uid("stock"),
-          type: "create_and_import",
-          note: `Tạo mới hàng: ${name}`,
+          type: "create_item",
+          note: `Tạo mới hàng vào kho: ${name}`,
           createdAt: new Date().toISOString(),
           items: [{ sku: newItem.sku, qty, cost }],
         },
         ...prev,
       ]);
-
-      pushNotification(`Đã tạo và nhập hàng mới: ${name}`, "success");
+      pushNotification(`Đã tạo hàng mới: ${name}`, "success");
     }
 
+    setInventoryForm({ id: "", name: "", unit: "", qty: "", cost: "" });
+  };
+
+  const startEditInventory = (item) => {
     setInventoryForm({
-      name: "",
-      unit: "",
-      qty: "",
-      cost: "",
+      id: item.id,
+      name: item.name,
+      unit: item.unit,
+      qty: String(item.stock),
+      cost: String(item.cost),
     });
   };
 
@@ -993,7 +995,7 @@ export default function App() {
     if (!target) return;
 
     const usedInMenu = menuItems.some((menu) =>
-      (menu.recipe || []).some((r) => r.sku === target.sku)
+      (menu.recipe || []).some((r) => r.inventoryId === itemId)
     );
 
     if (usedInMenu) {
@@ -1246,7 +1248,9 @@ export default function App() {
               </button>
             )}
 
-            <div style={styles.roleBadge}>{isAdmin ? "ADMIN" : "STAFF"}</div>
+            <div style={styles.roleBadge}>
+              {isAdmin ? "ADMIN" : "STAFF"}
+            </div>
           </div>
         </div>
 
@@ -1272,7 +1276,10 @@ export default function App() {
                     }}
                   >
                     <button
-                      style={styles.tableMainButton}
+                      style={{
+                        ...styles.tableMainButton,
+                        color: selectedTable === table ? "#ffd369" : "#eee",
+                      }}
                       onClick={() => setSelectedTable(table)}
                     >
                       <div>{table}</div>
@@ -1452,7 +1459,6 @@ export default function App() {
                 </select>
               </div>
 
-              {/* Khu vực danh sách sản phẩm đã được thêm thanh trượt cuộn và thu gọn */}
               <div style={styles.menuScrollContainer}>
                 <div style={styles.menuGrid}>
                   {filteredMenu.map((item) => (
@@ -1591,7 +1597,7 @@ export default function App() {
                       <div style={styles.emptyState}>Món này chưa có công thức.</div>
                     ) : (
                       (menuItems.find((m) => m.id === menuForm.id)?.recipe || []).map((r) => (
-                        <div key={r.sku} style={styles.listRow}>
+                        <div key={r.inventoryId || r.sku} style={styles.listRow}>
                           <div>
                             <div style={styles.rowTitle}>{r.name || r.sku}</div>
                             <div style={styles.rowSub}>
@@ -1659,11 +1665,13 @@ export default function App() {
           <div style={styles.twoCol}>
             <section style={styles.card}>
               <div style={styles.sectionTop}>
-                <h3 style={styles.sectionTitle}>Nhập hàng thủ công</h3>
+                <h3 style={styles.sectionTitle}>
+                  {inventoryForm.id ? "Sửa hàng tồn kho" : "Thêm nguyên liệu mới"}
+                </h3>
                 <div style={styles.muted}>Kho ban đầu trống, tự thêm tên hàng</div>
               </div>
 
-              <form onSubmit={handleImportStock} style={styles.stackForm}>
+              <form onSubmit={handleSaveInventory} style={styles.stackForm}>
                 <input
                   style={styles.compactInput}
                   placeholder="Tên hàng"
@@ -1685,7 +1693,7 @@ export default function App() {
                 <input
                   style={styles.compactInput}
                   type="number"
-                  placeholder="Số lượng nhập"
+                  placeholder={inventoryForm.id ? "Cập nhật số lượng tồn hiện có" : "Số lượng tồn kho ban đầu"}
                   value={inventoryForm.qty}
                   onChange={(e) =>
                     setInventoryForm((prev) => ({ ...prev, qty: e.target.value }))
@@ -1702,9 +1710,20 @@ export default function App() {
                   }
                 />
 
-                <button type="submit" style={styles.primaryBtn}>
-                  Thêm / nhập hàng
-                </button>
+                <div style={styles.buttonGrid2}>
+                  <button type="submit" style={styles.primaryBtn}>
+                    {inventoryForm.id ? "Cập nhật" : "Thêm mới"}
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.secondaryBtn}
+                    onClick={() =>
+                      setInventoryForm({ id: "", name: "", unit: "", qty: "", cost: "" })
+                    }
+                  >
+                    Hủy / Reset
+                  </button>
+                </div>
               </form>
 
               <div style={{ marginTop: 18 }}>
@@ -1735,41 +1754,47 @@ export default function App() {
                 <h3 style={styles.sectionTitle}>Tồn kho hiện tại</h3>
               </div>
 
-              <div style={styles.tableHeader5}>
-                <div>Tên hàng</div>
-                <div>Tồn</div>
-                <div>ĐVT</div>
-                <div>Giá nhập</div>
-                <div>Thao tác</div>
+              {/* Sử dụng cấu trúc hiển thị dạng Card Mobile hoặc Table tùy biến theo phong cách Dark */}
+              <div style={styles.inventoryMobileCardContainer}>
+                {inventory.length === 0 ? (
+                  <div style={styles.emptyState}>Kho đang trống. Anh hãy tự thêm hàng.</div>
+                ) : (
+                  inventory.map((item) => (
+                    <div key={item.id} style={styles.inventoryMobileCard}>
+                      <div style={styles.inventoryCardMain}>
+                        <div style={styles.inventoryCardTitle}>{item.name}</div>
+                        <div style={styles.inventoryCardMeta}>
+                          ĐVT: <span>{item.unit}</span> | Giá nhập: <span>{formatMoney(item.cost)} đ</span>
+                        </div>
+                      </div>
+                      <div style={styles.inventoryCardRight}>
+                        <div
+                          style={{
+                            ...styles.inventoryCardStock,
+                            color: Number(item.stock) <= 10 ? "#ff5252" : "#ffd369",
+                          }}
+                        >
+                          {formatMoney(item.stock)}
+                        </div>
+                        <div style={styles.inventoryCardActions}>
+                          <button
+                            style={styles.smallActionBtn}
+                            onClick={() => startEditInventory(item)}
+                          >
+                            Sửa
+                          </button>
+                          <button
+                            style={styles.smallActionBtnDanger}
+                            onClick={() => deleteInventoryItem(item.id)}
+                          >
+                            Xóa
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
-
-              {inventory.length === 0 ? (
-                <div style={styles.emptyState}>Kho đang trống. Anh hãy tự thêm hàng.</div>
-              ) : (
-                inventory.map((item) => (
-                  <div key={item.id} style={styles.tableRow5}>
-                    <div>{item.name}</div>
-                    <div
-                      style={{
-                        color: Number(item.stock) <= 10 ? "#c62828" : "#2c1c14",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {formatMoney(item.stock)}
-                    </div>
-                    <div>{item.unit}</div>
-                    <div>{formatMoney(item.cost)}</div>
-                    <div>
-                      <button
-                        style={styles.smallActionBtnDanger}
-                        onClick={() => deleteInventoryItem(item.id)}
-                      >
-                        Xóa
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
             </section>
           </div>
         )}
@@ -1819,7 +1844,7 @@ export default function App() {
 
                 <div style={styles.buttonGrid2}>
                   <button type="submit" style={styles.primaryBtn}>
-                    {staffForm.id ? "Cập nhật nhân viên" : "Thêm nhân viên"}
+                    {staffForm.id ? "Cập nhật" : "Thêm mới"}
                   </button>
                   <button
                     type="button"
@@ -1869,7 +1894,7 @@ export default function App() {
                       </button>
                       <button
                         style={styles.smallActionBtnDanger}
-                        onClick={() => deleteStaff(staffId)}
+                        onClick={() => deleteStaff(staff.id)}
                       >
                         Xóa
                       </button>
@@ -1968,10 +1993,10 @@ export default function App() {
               </div>
               <div style={styles.reportCard}>
                 <div style={styles.reportLabel}>Thiết bị thông báo</div>
-                <div style={{ ...styles.reportValue, fontSize: 18 }}>
+                <div style={{ ...styles.reportValue, fontSize: 18, color: "#ffd369" }}>
                   {notificationPermission === "granted"
                     ? "Đã bật trên máy này"
-                    : "Chưa bật / cần backend push"}
+                    : "Chưa bật / cần bổ sung push"}
                 </div>
               </div>
             </div>
@@ -1999,10 +2024,11 @@ export default function App() {
   );
 }
 
+// Hệ thống Styles thiết kế hoàn toàn theo phong cách Cinema Dark Warm (như hình ảnh bạn cung cấp)
 const styles = {
   page: {
     minHeight: "100vh",
-    background: "#ece8e4",
+    background: "#121212",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
@@ -2012,27 +2038,28 @@ const styles = {
   loginCard: {
     width: "100%",
     maxWidth: 760,
-    background: "#f7f4f1",
+    background: "#1e1e1e",
     borderRadius: 28,
     padding: 48,
-    boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+    boxShadow: "0 10px 40px rgba(0,0,0,0.5)",
     boxSizing: "border-box",
+    border: "1px solid #2a2a2a",
   },
   loginWatermark: {
     fontSize: 88,
     fontWeight: 800,
-    color: "#ddd7d3",
+    color: "#2d2d2d",
     marginBottom: 36,
     lineHeight: 1,
   },
   loginTitle: {
     fontSize: 48,
     margin: 0,
-    color: "#211917",
+    color: "#ffd369",
   },
   loginSubtitle: {
     fontSize: 28,
-    color: "#5e5551",
+    color: "#b5b5b5",
     marginTop: 18,
     marginBottom: 34,
   },
@@ -2040,16 +2067,17 @@ const styles = {
     width: "100%",
     height: 74,
     borderRadius: 24,
-    border: "2px solid #d8d0cb",
+    border: "2px solid #3a3a3a",
     padding: "0 22px",
     fontSize: 28,
     boxSizing: "border-box",
     marginBottom: 18,
-    background: "#fbfaf9",
+    background: "#252525",
+    color: "#fff",
   },
   errorBox: {
-    background: "#f6d7d7",
-    color: "#b71c1c",
+    background: "#5c1d1d",
+    color: "#ff8a8a",
     padding: 18,
     borderRadius: 18,
     marginBottom: 18,
@@ -2068,7 +2096,7 @@ const styles = {
   },
   loginBottom: {
     marginTop: 34,
-    color: "#655d59",
+    color: "#8c8c8c",
     fontSize: 24,
     lineHeight: 1.7,
     fontWeight: 700,
@@ -2076,7 +2104,8 @@ const styles = {
   appShell: {
     minHeight: "100vh",
     display: "flex",
-    background: "#efeae6",
+    background: "#121212",
+    color: "#eeeeee",
     fontFamily: "Arial, sans-serif",
   },
   notificationWrap: {
@@ -2095,527 +2124,173 @@ const styles = {
     borderRadius: 14,
     color: "#fff",
     fontWeight: 700,
-    boxShadow: "0 10px 24px rgba(0,0,0,0.16)",
+    boxShadow: "0 10px 24px rgba(0,0,0,0.5)",
   },
-  notificationSuccess: {
-    background: "#2e7d32",
-  },
-  notificationError: {
-    background: "#c62828",
-  },
-  notificationWarning: {
-    background: "#ef6c00",
-  },
-  notificationInfo: {
-    background: "#1565c0",
-  },
+  notificationSuccess: { background: "#1b5e20" },
+  notificationError: { background: "#b71c1c" },
+  notificationWarning: { background: "#e65100" },
+  notificationInfo: { background: "#0d47a1" },
+  
   sidebar: {
     width: 280,
-    background: "#2c1c14",
+    background: "#181818",
     color: "#fff",
     display: "flex",
     flexDirection: "column",
     justifyContent: "space-between",
     padding: 22,
     boxSizing: "border-box",
+    borderRight: "1px solid #262626",
   },
   logo: {
     fontSize: 34,
     fontWeight: 800,
     letterSpacing: 1,
+    color: "#ffd369",
   },
   brandSub: {
-    opacity: 0.8,
+    opacity: 0.6,
     marginTop: 4,
     marginBottom: 24,
+    fontSize: 14,
   },
   userCard: {
-    background: "rgba(255,255,255,0.08)",
+    background: "#222222",
     borderRadius: 18,
     padding: 16,
     marginBottom: 22,
+    border: "1px solid #2d2d2d",
   },
-  userName: {
-    fontSize: 24,
-    fontWeight: 700,
-  },
-  userRole: {
-    marginTop: 6,
-    opacity: 0.8,
-    fontSize: 15,
-  },
-  navList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-  },
+  userName: { fontSize: 20, fontWeight: 700, color: "#fff" },
+  userRole: { marginTop: 6, opacity: 0.7, fontSize: 14, color: "#ffd369" },
+  navList: { display: "flex", flexDirection: "column", gap: 12 },
   navButton: {
     height: 52,
     border: "none",
     borderRadius: 16,
-    background: "#4b2f22",
-    color: "#fff",
+    background: "#222222",
+    color: "#ccc",
     fontWeight: 700,
-    fontSize: 17,
+    fontSize: 16,
     cursor: "pointer",
+    textAlign: "left",
+    paddingLeft: 20,
+    transition: "all 0.2s",
   },
-  navButtonActive: {
-    background: "#9a430a",
-  },
+  navButtonActive: { background: "#9a430a", color: "#fff" },
   logoutBtn: {
     height: 52,
     borderRadius: 16,
-    border: "none",
-    background: "#fff",
-    color: "#2c1c14",
+    border: "1px solid #3a3a3a",
+    background: "#222",
+    color: "#ff5252",
     fontWeight: 700,
-    fontSize: 17,
+    fontSize: 16,
     cursor: "pointer",
   },
-  main: {
-    flex: 1,
-    padding: 24,
-    boxSizing: "border-box",
-  },
+  
+  main: { flex: 1, padding: 24, boxSizing: "border-box", overflowY: "auto" },
   headerBar: {
-    background: "#f8f4f1",
+    background: "#1e1e1e",
     borderRadius: 22,
     padding: 20,
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 20,
-    boxShadow: "0 6px 18px rgba(0,0,0,0.05)",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.3)",
     gap: 12,
+    border: "1px solid #2a2a2a",
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 800,
-    color: "#241816",
-  },
-  headerSub: {
-    marginTop: 6,
-    color: "#756861",
-  },
-  headerActions: {
-    display: "flex",
-    gap: 10,
-    alignItems: "center",
-    flexWrap: "wrap",
-  },
-  roleBadge: {
-    background: "#9a430a",
-    color: "#fff",
-    padding: "10px 16px",
-    borderRadius: 999,
-    fontWeight: 700,
-  },
-  salesLayout: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1.2fr 1fr",
-    gap: 20,
-  },
-  twoCol: {
-    display: "grid",
-    gridTemplateColumns: "0.95fr 1.25fr",
-    gap: 20,
-  },
+  headerTitle: { fontSize: 26, fontWeight: 800, color: "#fff" },
+  headerSub: { marginTop: 6, color: "#aaa", fontSize: 14 },
+  headerActions: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
+  roleBadge: { background: "#9a430a", color: "#fff", padding: "10px 16px", borderRadius: 999, fontWeight: 700, fontSize: 14 },
+  
+  salesLayout: { display: "grid", gridTemplateColumns: "1fr 1.2fr 1.1fr", gap: 20 },
+  twoCol: { display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 20 },
   card: {
-    background: "#f8f4f1",
+    background: "#1e1e1e",
     borderRadius: 24,
     padding: 20,
-    boxShadow: "0 6px 18px rgba(0,0,0,0.05)",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.3)",
+    border: "1px solid #2a2a2a",
   },
-  sectionTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 14,
-    flexWrap: "wrap",
-  },
-  sectionTitle: {
-    margin: 0,
-    fontSize: 24,
-    color: "#241816",
-  },
-  muted: {
-    color: "#7f726a",
-    fontSize: 14,
-  },
-  smallButton: {
-    height: 38,
-    padding: "0 14px",
-    border: "none",
-    borderRadius: 12,
-    background: "#9a430a",
-    color: "#fff",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  tableGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, 1fr)",
-    gap: 12,
-  },
-  tableCard: {
-    position: "relative",
-    background: "#fff",
-    borderRadius: 18,
-    border: "2px solid #e2d7d0",
-    overflow: "hidden",
-  },
-  tableCardActive: {
-    border: "2px solid #9a430a",
-  },
-  tableMainButton: {
-    width: "100%",
-    minHeight: 78,
-    border: "none",
-    background: "transparent",
-    cursor: "pointer",
-    fontWeight: 700,
-    color: "#241816",
-  },
-  tableMeta: {
-    marginTop: 6,
-    fontSize: 13,
-    opacity: 0.8,
-    fontWeight: 500,
-  },
-  tableDeleteBtn: {
-    position: "absolute",
-    top: 6,
-    right: 6,
-    width: 24,
-    height: 24,
-    border: "none",
-    borderRadius: 999,
-    background: "#d32f2f",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 700,
-    lineHeight: 1,
-  },
-  toolBox: {
-    marginTop: 16,
-    background: "#fff",
-    borderRadius: 18,
-    padding: 14,
-    border: "1px solid #eadfd8",
-  },
-  toolTitle: {
-    fontWeight: 700,
-    marginBottom: 12,
-    color: "#241816",
-  },
-  formBlock: {
-    display: "grid",
-    gridTemplateColumns: "1fr auto",
-    gap: 10,
-    marginBottom: 10,
-  },
-  form2Col: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 12,
-    marginBottom: 14,
-  },
-  compactInput: {
-    height: 46,
-    borderRadius: 14,
-    border: "1px solid #d9cfc8",
-    padding: "0 14px",
-    fontSize: 15,
-    boxSizing: "border-box",
-    background: "#fff",
-  },
-  orderList: {
-    background: "#fff",
-    borderRadius: 18,
-    padding: 12,
-    minHeight: 300,
-    maxHeight: 460,
-    overflow: "auto",
-    border: "1px solid #ebe1da",
-  },
-  emptyState: {
-    color: "#7d7169",
-    padding: 14,
-    background: "#fff",
-    borderRadius: 14,
-    border: "1px dashed #ddd1ca",
-  },
-  orderRow: {
-    display: "grid",
-    gridTemplateColumns: "1fr auto auto",
-    gap: 12,
-    alignItems: "center",
-    padding: "10px 8px",
-    borderBottom: "1px dashed #eadfd8",
-  },
-  orderName: {
-    fontWeight: 700,
-    color: "#241816",
-  },
-  orderSub: {
-    marginTop: 4,
-    color: "#7b6c63",
-    fontSize: 13,
-  },
-  qtyWrap: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  qtyBtn: {
-    width: 30,
-    height: 30,
-    border: "none",
-    borderRadius: 10,
-    background: "#9a430a",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 700,
-  },
-  qtyValue: {
-    minWidth: 18,
-    textAlign: "center",
-    fontWeight: 700,
-  },
-  removeBtn: {
-    height: 30,
-    padding: "0 10px",
-    borderRadius: 10,
-    border: "none",
-    background: "#e8d8cf",
-    color: "#6d4f40",
-    cursor: "pointer",
-    fontWeight: 700,
-  },
-  orderAmount: {
-    minWidth: 90,
-    textAlign: "right",
-    fontWeight: 700,
-    color: "#241816",
-  },
-  totalBox: {
-    background: "#efe3da",
-    borderRadius: 18,
-    padding: 14,
-    marginTop: 14,
-  },
-  totalRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    marginBottom: 8,
-    color: "#241816",
-  },
-  totalStrong: {
-    fontSize: 20,
-    marginBottom: 0,
-  },
-  buttonGrid3: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr 1.2fr",
-    gap: 10,
-    marginTop: 14,
-  },
-  buttonGrid2: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 10,
-  },
-  primaryBtn: {
-    height: 46,
-    borderRadius: 14,
-    border: "none",
-    background: "#9a430a",
-    color: "#fff",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  secondaryBtn: {
-    height: 46,
-    borderRadius: 14,
-    border: "2px solid #d9c7bc",
-    background: "#fff",
-    color: "#6c5345",
-    fontWeight: 700,
-    cursor: "pointer",
-  },
-  // Style mới bọc ngoài phần Menu Grid để tạo thanh cuộn thu gọn gọn gàng
-  menuScrollContainer: {
-    maxHeight: 520,
-    overflowY: "auto",
-    paddingRight: 6, // Khoảng đệm để thanh cuộn không đè sát nút bấm
-  },
-  menuGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(2, 1fr)",
-    gap: 12,
-  },
-  menuCard: {
-    background: "#fff",
-    border: "1px solid #e7dbd3",
-    borderRadius: 18,
-    padding: 14,
-    textAlign: "left",
-    cursor: "pointer",
-  },
-  menuTitle: {
-    fontWeight: 700,
-    color: "#241816",
-  },
-  menuCat: {
-    color: "#8a7b72",
-    marginTop: 4,
-    fontSize: 13,
-  },
-  menuPrice: {
-    marginTop: 10,
-    color: "#9a430a",
-    fontWeight: 800,
-  },
-  stackForm: {
-    display: "grid",
-    gap: 12,
-  },
-  formInline: {
-    display: "flex",
-    gap: 12,
-    alignItems: "center",
-  },
-  checkboxLabel: {
-    display: "flex",
-    gap: 8,
-    alignItems: "center",
-    color: "#241816",
-  },
-  listBox: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-    maxHeight: 560,
-    overflow: "auto",
-  },
-  listRow: {
-    background: "#fff",
-    border: "1px solid #e8ddd6",
-    borderRadius: 16,
-    padding: 14,
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    alignItems: "center",
-  },
-  rowTitle: {
-    fontWeight: 700,
-    color: "#241816",
-  },
-  rowSub: {
-    marginTop: 4,
-    color: "#7d6f67",
-    fontSize: 13,
-  },
-  rowActions: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  smallActionBtn: {
-    height: 34,
-    padding: "0 12px",
-    border: "none",
-    borderRadius: 12,
-    background: "#e8d8cf",
-    color: "#6d4f40",
-    cursor: "pointer",
-    fontWeight: 700,
-  },
-  smallActionBtnDanger: {
-    height: 34,
-    padding: "0 12px",
-    border: "none",
-    borderRadius: 12,
-    background: "#d32f2f",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 700,
-  },
-  tableHeader5: {
-    display: "grid",
-    gridTemplateColumns: "2fr 1fr 1fr 1fr 100px",
-    gap: 10,
-    padding: 14,
-    background: "#f1e5dc",
-    borderRadius: 16,
-    fontWeight: 800,
-    color: "#241816",
-    marginBottom: 8,
-  },
-  tableRow5: {
-    display: "grid",
-    gridTemplateColumns: "2fr 1fr 1fr 1fr 100px",
-    gap: 10,
-    padding: 14,
-    background: "#fff",
-    borderRadius: 14,
-    marginBottom: 8,
-    border: "1px solid #e8ddd6",
-    alignItems: "center",
-  },
-  billCard: {
-    background: "#fff",
-    border: "1px solid #e8ddd6",
-    borderRadius: 18,
-    padding: 16,
-  },
-  billTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    alignItems: "flex-start",
-  },
-  billTotal: {
-    fontWeight: 800,
-    color: "#9a430a",
-    fontSize: 20,
-  },
-  billItems: {
-    marginTop: 12,
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  },
-  billItemRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  reportGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: 18,
-  },
-  reportCard: {
-    background: "#f8f4f1",
-    borderRadius: 22,
-    padding: 22,
-    boxShadow: "0 6px 18px rgba(0,0,0,0.05)",
-  },
-  reportLabel: {
-    color: "#7b6d65",
-    marginBottom: 10,
-  },
-  reportValue: {
-    color: "#241816",
-    fontSize: 30,
-    fontWeight: 800,
-  },
-  reportMiniValue: {
-    fontWeight: 800,
-    color: "#9a430a",
-  },
+  sectionTop: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" },
+  sectionTitle: { margin: 0, fontSize: 22, color: "#ffd369", fontWeight: 700 },
+  muted: { color: "#8c8c8c", fontSize: 13 },
+  smallButton: { height: 38, padding: "0 14px", border: "none", borderRadius: 12, background: "#9a430a", color: "#fff", fontWeight: 700, cursor: "pointer" },
+  
+  tableGrid: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 },
+  tableCard: { position: "relative", background: "#252525", borderRadius: 18, border: "2px solid #333", overflow: "hidden" },
+  tableCardActive: { border: "2px solid #ffd369", background: "#2a2415" },
+  tableMainButton: { width: "100%", minHeight: 78, border: "none", background: "transparent", cursor: "pointer", fontWeight: 700 },
+  tableMeta: { marginTop: 6, fontSize: 13, opacity: 0.6, fontWeight: 500, color: "#bbb" },
+  tableDeleteBtn: { position: "absolute", top: 6, right: 6, width: 24, height: 24, border: "none", borderRadius: 999, background: "#cc3333", color: "#fff", cursor: "pointer", fontWeight: 700 },
+  
+  toolBox: { marginTop: 16, background: "#252525", borderRadius: 18, padding: 14, border: "1px solid #333" },
+  toolTitle: { fontWeight: 700, marginBottom: 12, color: "#fff" },
+  formBlock: { display: "grid", gridTemplateColumns: "1fr auto", gap: 10, marginBottom: 10 },
+  form2Col: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 },
+  compactInput: { height: 46, borderRadius: 14, border: "1px solid #3a3a3a", padding: "0 14px", fontSize: 15, boxSizing: "border-box", background: "#2b2b2b", color: "#fff" },
+  
+  orderList: { background: "#252525", borderRadius: 18, padding: 12, minHeight: 320, maxHeight: 460, overflow: "auto", border: "1px solid #333" },
+  emptyState: { color: "#8c8c8c", padding: 14, background: "#252525", borderRadius: 14, border: "1px dashed #444" },
+  orderRow: { display: "grid", gridTemplateColumns: "1fr auto auto", gap: 12, alignItems: "center", padding: "10px 8px", borderBottom: "1px dashed #3a3a3a" },
+  orderName: { fontWeight: 700, color: "#fff" },
+  orderSub: { marginTop: 4, color: "#aaa", fontSize: 13 },
+  qtyWrap: { display: "flex", alignItems: "center", gap: 8 },
+  qtyBtn: { width: 30, height: 30, border: "none", borderRadius: 10, background: "#9a430a", color: "#fff", cursor: "pointer", fontWeight: 700 },
+  qtyValue: { minWidth: 18, textAlign: "center", fontWeight: 700, color: "#fff" },
+  removeBtn: { height: 30, padding: "0 10px", borderRadius: 10, border: "none", background: "#3a3a3a", color: "#ff7676", cursor: "pointer", fontWeight: 700 },
+  orderAmount: { minWidth: 90, textAlign: "right", fontWeight: 700, color: "#ffd369" },
+  
+  totalBox: { background: "#2e251a", borderRadius: 18, padding: 14, marginTop: 14, border: "1px solid #4a3b2c" },
+  totalRow: { display: "flex", justifyContent: "space-between", marginBottom: 8, color: "#ddd" },
+  totalStrong: { fontSize: 20, marginBottom: 0, color: "#ffd369" },
+  buttonGrid3: { display: "grid", gridTemplateColumns: "1fr 1fr 1.3fr", gap: 10, marginTop: 14 },
+  buttonGrid2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+  primaryBtn: { height: 46, borderRadius: 14, border: "none", background: "#9a430a", color: "#fff", fontWeight: 700, cursor: "pointer" },
+  secondaryBtn: { height: 46, borderRadius: 14, border: "1px solid #444", background: "#2b2b2b", color: "#eee", fontWeight: 700, cursor: "pointer" },
+  
+  // Menu Container giữ nguyên tính năng thu gọn và thanh cuộn dọc từ bản chỉnh sửa trước
+  menuScrollContainer: { maxHeight: 520, overflowY: "auto", paddingRight: 6 },
+  menuGrid: { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 },
+  menuCard: { background: "#252525", border: "1px solid #333", borderRadius: 18, padding: 14, textAlign: "left", cursor: "pointer", transition: "transform 0.1s" },
+  menuTitle: { fontWeight: 700, color: "#fff" },
+  menuCat: { color: "#aaa", marginTop: 4, fontSize: 13 },
+  menuPrice: { marginTop: 10, color: "#ffd369", fontWeight: 800 },
+  
+  stackForm: { display: "grid", gap: 12 },
+  formInline: { display: "flex", gap: 12, alignItems: "center" },
+  checkboxLabel: { display: "flex", gap: 8, alignItems: "center", color: "#fff" },
+  listBox: { display: "flex", flexDirection: "column", gap: 12, maxHeight: 560, overflow: "auto" },
+  listRow: { background: "#252525", border: "1px solid #333", borderRadius: 16, padding: 14, display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" },
+  rowTitle: { fontWeight: 700, color: "#fff" },
+  rowSub: { marginTop: 4, color: "#aaa", fontSize: 13 },
+  rowActions: { display: "flex", gap: 8, flexWrap: "wrap" },
+  smallActionBtn: { height: 34, padding: "0 12px", border: "none", borderRadius: 12, background: "#3a3a3a", color: "#fff", cursor: "pointer", fontWeight: 700 },
+  smallActionBtnDanger: { height: 34, padding: "0 12px", border: "none", borderRadius: 12, background: "#cc3333", color: "#fff", cursor: "pointer", fontWeight: 700 },
+  
+  // Tối ưu danh sách kho sang dạng Layout Card của thiết kế cao cấp thay cho bảng thô cứng
+  inventoryMobileCardContainer: { display: "flex", flexDirection: "column", gap: 12, maxHeight: 520, overflowY: "auto" },
+  inventoryMobileCard: { background: "#252525", border: "1px solid #333", borderRadius: 18, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 },
+  inventoryCardMain: { display: "flex", flexDirection: "column", gap: 6 },
+  inventoryCardTitle: { fontSize: 16, fontWeight: 700, color: "#fff" },
+  inventoryCardMeta: { fontSize: 13, color: "#aaa" },
+  inventoryCardRight: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 },
+  inventoryCardStock: { fontSize: 20, fontWeight: 800 },
+  inventoryCardActions: { display: "flex", gap: 6 },
+
+  billCard: { background: "#252525", border: "1px solid #333", borderRadius: 18, padding: 16 },
+  billTop: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" },
+  billTotal: { fontWeight: 800, color: "#ffd369", fontSize: 20 },
+  billItems: { marginTop: 12, display: "flex", flexDirection: "column", gap: 8 },
+  billItemRow: { display: "flex", justifyContent: "space-between", gap: 12 },
+  
+  reportGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 18 },
+  reportCard: { background: "#1e1e1e", borderRadius: 22, padding: 22, border: "1px solid #2a2a2a", boxShadow: "0 6px 18px rgba(0,0,0,0.3)" },
+  reportLabel: { color: "#aaa", marginBottom: 10, fontSize: 14 },
+  reportValue: { color: "#fff", fontSize: 30, fontWeight: 800 },
+  reportMiniValue: { fontWeight: 800, color: "#ffd369" },
 };
